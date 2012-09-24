@@ -8,7 +8,7 @@
 """
 
 from pyon.public import log
-from coverage_model.basic_types import AbstractIdentifiable, VariabilityEnum, AxisTypeEnum
+from coverage_model.basic_types import AbstractIdentifiable, VariabilityEnum, AxisTypeEnum, Dictable
 from coverage_model.parameter_types import AbstractParameterType, QuantityType
 from collections import OrderedDict
 import copy
@@ -69,21 +69,37 @@ class ParameterContext(AbstractIdentifiable):
     """
 
     # Dynamically added attributes - from ObjectType CI Attributes (2480139)
-    ATTRS = ['attributes',
-             'index_key',
-             'ion_name',
-#             'name', # accounted for as 'name'
-#             'units', # accounted for as 'uom'
-             'standard_name',
-             'long_name',
-             'ooi_short_name',
-#             'missing_value', # accounted for as 'fill_value'
-             'cdm_data_type',
-             'variable_reports',
-#             'axis', # accounted for as 'reference_frame'
-             'references_list',
-             'comment',
-             'code_reports',]
+#    ATTRS = ['attributes',
+#             'index_key',
+#             'ion_name',
+##             'name', # accounted for as 'name'
+##             'units', # accounted for as 'uom'
+#             'standard_name',
+#             'long_name',
+#             'ooi_short_name',
+##             'missing_value', # accounted for as 'fill_value'
+#             'cdm_data_type',
+#             'variable_reports',
+##             'axis', # accounted for as 'reference_frame'
+#             'references_list',
+#             'comment',
+#             'code_reports',]
+
+    ATTRS = {
+        'reference_urls':None,
+        'standard_name':None,
+        'long_name':None,
+        'ooi_short_name':None,
+        'cdm_data_type':None,
+        'comment':None,
+        'ioos_category':None,
+        'parameter_characteristic_reports':[],
+        'code_reports':[],
+        'axis':'reference_frame',
+        'ion_name':'name',
+        'fill_value':'fill_value',
+        'units':'uom',
+    }
 
 
     # TODO: Need to incorporate some indication of if the parameter is a function of temporal, spatial, both, or None
@@ -133,8 +149,11 @@ class ParameterContext(AbstractIdentifiable):
             self.fill_value = fill_value or param_context.fill_value
             self.variability = variability or param_context.variability
 
-            for a in self.ATTRS:
-                setattr(self, a, kwargs[a] if a in my_kwargs else getattr(param_context, a))
+            for a, ref in self.ATTRS.iteritems():
+                if isinstance(ref, str):
+                    setattr(self.__class__, a, property(lambda self: getattr(self, ref), lambda self, val: setattr(self, ref, val)))
+                else:
+                    setattr(self, a, kwargs[a] if a in my_kwargs else getattr(param_context, a))
 
         else:
             # TODO: Should this be None?  potential for mismatches if the self-given name happens to match a "blessed" name...
@@ -149,8 +168,11 @@ class ParameterContext(AbstractIdentifiable):
                 self.fill_value = fill_value
             self.variability = variability or VariabilityEnum.BOTH
 
-            for a in self.ATTRS:
-                setattr(self, a, kwargs[a] if a in my_kwargs else None)
+            for a, ref in self.ATTRS.iteritems():
+                if isinstance(ref, str):
+                    setattr(self.__class__, a, property(lambda self: getattr(self, ref), lambda self, val: setattr(self, ref, val)))
+                else:
+                    setattr(self, a, kwargs[a] if a in my_kwargs else None)
 
     @property
     def is_coordinate(self):
@@ -369,6 +391,26 @@ class ParameterDictionary(AbstractIdentifiable):
 
     def __ne__(self, other):
         return not self == other
+
+class ParameterCharacteristicsReport(Dictable):
+
+    def __init__(self, characteristic_name=None, units=None, source=None, comments=None, value=None, applicable_range_min=None, applicable_range_max=None):
+        Dictable.__init__(self)
+        self.characteristic_name = characteristic_name or 'not_provided'
+        self.units = units or 'not_provided'
+        self.source = source or 'not_provided'
+        self.comments = comments or 'not_provided'
+        self.value = value or 'not_provided'
+        self.applicable_range_min = applicable_range_min or 'not_provided'
+        self.applicable_range_max = applicable_range_max or 'not_provided'
+
+class CodeReport(Dictable):
+
+    def __init__(self, code_value=None, code_meaning=None):
+        Dictable.__init__(self)
+        self.code_value = code_value or 'not_provided'
+        self.code_meaning = code_meaning or 'not_provided'
+
 
 """
 
