@@ -222,6 +222,20 @@ class CategoryValue(AbstractComplexParameterValue):
 
         return ret
 
+    def __setitem__(self, slice_, value):
+        slice_ = fix_slice(slice_, self.shape)
+        if np.asanyarray(value).dtype.kind == np.dtype(self.parameter_type.value_encoding).kind:
+            # Set as ordinals
+            self._storage[slice_] = value
+        else:
+            rcats={v:k for k,v in self.parameter_type.categories.iteritems()}
+            try:
+                vals=[rcats[v] for v in value]
+                self._storage[slice_] = vals
+            except KeyError, ke:
+                raise ValueError('Invalid category specified: \'{0}\''.format(ke.message))
+
+
 class RecordValue(AbstractComplexParameterValue):
 
     def __init__(self, parameter_type, domain_set, storage=None, **kwargs):
