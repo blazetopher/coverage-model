@@ -186,12 +186,105 @@ class ViewCoverage(AbstractCoverage):
     """
     References 1 AbstractCoverage and applies a Filter
     """
-    def __init__(self):
-        AbstractCoverage.__init__(self)
+    def __init__(self, root_dir, persistence_guid, reference_coverage, name=None, parameter_dictionary=None, mode='r'):
+        AbstractCoverage.__init__(self, mode=mode)
 
-        self.reference_coverage = ''
-        self.structure_filter = StructureFilter()
-        self.parameter_filter = ParameterFilter()
+        try:
+            # Make sure root_dir and persistence_guid are both not None and are strings
+            if not isinstance(root_dir, str) or not isinstance(persistence_guid, str):
+                raise TypeError('\'root_dir\' and \'persistence_guid\' must be instances of str')
+
+            root_dir = root_dir if not root_dir.endswith(persistence_guid) else os.path.split(root_dir)[0]
+
+            pth=os.path.join(root_dir, persistence_guid)
+
+            def _doload(self):
+                # Make sure the coverage directory exists
+                if not os.path.exists(pth):
+                    raise SystemError('Cannot find specified coverage: {0}'.format(pth))
+
+                pass
+
+            if name is None or parameter_dictionary is None:
+                # This appears to be a load
+                _doload(self)
+            else:
+                # This appears to be a new coverage
+                # Make sure name and parameter_dictionary are not None
+                if name is None or parameter_dictionary is None:
+                    raise SystemError('\'name\' and \'parameter_dictionary\' cannot be None')
+
+                # If the coverage directory exists, load it instead!!
+                if os.path.exists(pth):
+                    log.warn('The specified coverage already exists - performing load of \'{0}\''.format(pth))
+                    _doload(self)
+                    return
+
+                if not isinstance(reference_coverage, str):
+                    raise TypeError('\'reference_coverage\' must be of type str')
+
+                if not os.path.exists(reference_coverage):
+                    raise IOError('Cannot locate reference_coverage \'{0}\''.format(reference_coverage))
+
+                self.reference_coverage = AbstractCoverage.load(reference_coverage, mode='r')
+
+                self.parameter_filter = ParameterFilter(view_parameter_dictionary=parameter_dictionary, reference_parameter_dictionary=self.reference_coverage.parameter_dictionary)
+                self.structure_filter = StructureFilter()
+
+        except:
+            self._closed = True
+            raise
+
+    @property
+    def parameter_dictionary(self):
+        return deepcopy(self.parameter_filter.pdict)
+
+    def get_parameter(self, param_name):
+        pass
+
+    def list_parameters(self, coords_only=False, data_only=False):
+        ref_params = self.reference_coverage.list_parameters(coords_only, data_only)
+        return self.parameter_filter.list_parameters(ref_params)
+
+    def insert_timesteps(self, count, origin=None):
+        raise TypeError('Cannot insert timesteps into a ViewCoverage')
+
+    def set_time_values(self, value, tdoa=None):
+        raise TypeError('Cannot set values against a ViewCoverage')
+
+    def get_time_values(self, tdoa=None, return_value=None):
+        pass
+
+    @property
+    def num_timesteps(self):
+        pass
+
+    def set_parameter_values(self, param_name, value, tdoa=None, sdoa=None):
+        raise TypeError('Cannot set values against a ViewCoverage')
+
+    def get_parameter_values(self, param_name, tdoa=None, sdoa=None, return_value=None):
+        pass
+
+    def get_parameter_context(self, param_name):
+        pass
+
+    def get_data_bounds(self, parameter_name=None):
+        pass
+
+    def get_data_bounds_by_axis(self, axis=None):
+        pass
+
+    def get_data_extents(self, parameter_name=None):
+        pass
+
+    def get_data_extents_by_axis(self, axis=None):
+        pass
+
+    def get_data_size(self, parameter_name=None, slice_=None, in_bytes=False):
+        pass
+
+
+
 
 class ComplexCoverage(AbstractCoverage):
     # TODO: Implement
@@ -912,6 +1005,15 @@ class RangeValues(Dictable):
     def __iter__(self):
         return self.__dict__.__iter__()
 
+    def iteritems(self):
+        return self.__dict__.iteritems()
+
+    def itervalues(self):
+        return self.__dict__.itervalues()
+
+    def iterkeys(self):
+        return self.__dict__.iterkeys()
+
     def __dir__(self):
         return self.__dict__.keys()
 
@@ -1176,9 +1278,21 @@ class ParameterFilter(AbstractFilter):
     """
 
     """
-    def __init__(self):
+    def __init__(self, view_parameter_dictionary, reference_parameter_dictionary):
         AbstractFilter.__init__(self)
+        self.pdict = self.build_view_parameter_dictionary(view_parameter_dictionary, reference_parameter_dictionary)
 
+    def build_view_parameter_dictionary(self, view_parameter_dictionary, reference_parameter_dictionary):
+        log.warn(view_parameter_dictionary.compare(reference_parameter_dictionary))
+        pdict = ParameterDictionary()
+        for k, pc in view_parameter_dictionary.iteritems():
+            if pc[1] == reference_parameter_dictionary.get_context(k):
+                pdict.add_context(pc[1])
+
+        return pdict
+
+    def list_parameters(self, parameters):
+        return [x for x in parameters if x in self.pdict.keys()]
 
 
 #=========================

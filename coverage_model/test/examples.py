@@ -170,6 +170,31 @@ def param_dict_compare():
     print "Returning: pdict_1, pdict_2, pdict_3, pdict_4"
     return pdict_1, pdict_2, pdict_3, pdict_4
 
+def sampleviewcov():
+    cov = samplecov()
+    ref_cov = cov.persistence_dir
+    cov.close()
+
+    # Instantiate a ParameterDictionary
+    pdict = ParameterDictionary()
+
+    # Create a set of ParameterContext objects to define the parameters in the coverage, add each to the ParameterDictionary
+    t_ctxt = ParameterContext('time', param_type=QuantityType(value_encoding=np.dtype('int64')))
+    t_ctxt.uom = 'seconds since 01-01-1970'
+    pdict.add_context(t_ctxt, is_temporal=True)
+
+    temp_ctxt = ParameterContext('temp', param_type=QuantityType(value_encoding=np.dtype('float32')))
+    temp_ctxt.uom = 'degree_Celsius'
+    pdict.add_context(temp_ctxt)
+
+    cov = ViewCoverage('test_data',
+        'test_view',
+        reference_coverage=ref_cov,
+        name='test ViewCoverage',
+        parameter_dictionary=pdict)
+
+    return cov
+
 def samplecov(save_coverage=False, in_memory=False, inline_data_writes=True):
     # Instantiate a ParameterDictionary
     pdict = ParameterDictionary()
