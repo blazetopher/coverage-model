@@ -23,10 +23,6 @@ from pyon.core.interceptor.encode import encode_ion, decode_ion
 from msgpack import packb, unpackb
 import numpy as np
 
-import tempfile
-from pidantic.supd.pidsupd import SupDPidanticFactory
-from pidantic.state_machine import PIDanticState
-
 REQUEST_WORK = 'REQUEST_WORK'
 SUCCESS = 'SUCCESS'
 FAILURE = 'FAILURE'
@@ -131,15 +127,9 @@ class BaseBrickWriterDispatcher(object):
 
             log.debug('Shutdown workers')
             # Shutdown workers - work should be completed by now...
-            if self.is_single_worker:
-                # Current work will be finished
-                self.workers[0].stop()
-            else:
-                self.workers = self.factory.reload_instances()
-                # CBM TODO:  THIS DOES NOT ALLOW CURRENT WORK TO FINISH!!!
-                for x in self.workers:
-                    self.workers[x].cleanup()
-                self.factory.terminate()
+            for worker in self.workers:
+                worker.stop()
+
             log.debug('Workers shutdown')
         except:
             raise
@@ -262,7 +252,6 @@ class BaseBrickWriterDispatcher(object):
             #       e         time.sleep(0.1)
                 pass
 
-
     def receiver(self):
         while True:
             try:
@@ -350,10 +339,7 @@ class BaseBrickWriterDispatcher(object):
 
 class BrickWriterDispatcher(BaseBrickWriterDispatcher):
 
-    def __init__(self, failure_callback, num_workers=1, pidantic_dir=None, working_dir=None):
-        self.working_dir = working_dir or '.'
-        self.pidantic_dir = pidantic_dir or './pid_dir'
-
+    def __init__(self, failure_callback, num_workers=1):
         BaseBrickWriterDispatcher.__init__(self, failure_callback=failure_callback, num_workers=num_workers)
 
     def _setup(self):
@@ -376,54 +362,10 @@ class BrickWriterDispatcher(BaseBrickWriterDispatcher):
                 continue
 
     def _configure_workers(self):
-        # TODO: if num_workers == 1, simply run one in-line (runs in a greenlet anyhow)
-        if self.is_single_worker:
-            from brick_worker import run_zmq_worker
+        from brick_worker import run_zmq_worker
+        for x in xrange(self.num_workers):
             worker = run_zmq_worker(self.prov_port, self.resp_port)
             self.workers.append(worker)
-        else:
-            if os.path.exists(self.pidantic_dir):
-                bdp = os.path.join(self.pidantic_dir, 'brick_dispatch')
-                if os.path.exists(bdp):
-                    import zipfile, zlib
-                    with zipfile.ZipFile(os.path.join(bdp, 'archived_worker_logs.zip'), 'a', zipfile.ZIP_DEFLATED) as f:
-                        names = f.namelist()
-                        for x in [x for x in os.listdir(bdp) if x.startswith('worker_') and x not in names]:
-                            fn = os.path.join(bdp, x)
-                            f.write(filename=fn, arcname=x)
-                            os.remove(fn)
-
-            else:
-                os.makedirs(self.pidantic_dir)
-
-            self.factory = SupDPidanticFactory(name='brick_dispatch', directory=self.pidantic_dir)
-            # Check for old workers - FOR NOW, TERMINATE THEM TODO: These should be reusable...
-            old_workers = self.factory.reload_instances()
-            for x in old_workers:
-                old_workers[x].cleanup()
-
-            worker_cmd = 'bin/python coverage_model/brick_worker.py {0} {1}'.format(self.prov_port, self.resp_port)
-            for x in xrange(self.num_workers):
-                w = self.factory.get_pidantic(command=worker_cmd, process_name='worker_{0}'.format(x), directory=os.path.realpath(self.working_dir))
-                w.start()
-                self.workers.append(w)
-
-            ready=False
-            while not ready:
-                self.factory.poll()
-                for x in self.workers:
-                    s = x.get_state()
-                    if s is PIDanticState.STATE_STARTING:
-                        break
-                    elif s is PIDanticState.STATE_RUNNING:
-                        continue
-                    elif s is PIDanticState.STATE_EXITED:
-                        self.shutdown()
-                        raise SystemError('Error starting worker - cannot continue')
-                    else:
-                        raise SystemError('Problem starting worker - cannot continue')
-
-                ready = True
 
     def _shutdown(self):
         log.debug('Closing provisioner and receiver sockets')
@@ -479,8 +421,8 @@ class BrickWriterDispatcher(BaseBrickWriterDispatcher):
 def run_test_dispatcher(work_count, num_workers=1):
     # Set up temporary directories to save data
     import shutil
+    import tempfile
     BASE_DIR = tempfile.mkdtemp()
-    PIDANTIC_DIR = tempfile.mkdtemp()
 
     WORK_KEYS = ['a','b','c','d','e']
 
@@ -501,7 +443,7 @@ def run_test_dispatcher(work_count, num_workers=1):
     def fcb(message, work):
         log.error('WORK DISCARDED!!!; %s: %s', message, work)
 
-    disp = BrickWriterDispatcher(fcb, num_workers=num_workers, pidantic_dir=PIDANTIC_DIR)
+    disp = BrickWriterDispatcher(fcb, num_workers=num_workers)
     disp.run()
 
     def make_work():
@@ -523,7 +465,6 @@ def run_test_dispatcher(work_count, num_workers=1):
 
     # Remove temporary directories
     shutil.rmtree(BASE_DIR)
-    shutil.rmtree(PIDANTIC_DIR)
 
     return disp
 
