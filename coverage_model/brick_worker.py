@@ -142,10 +142,6 @@ class ZmqBrickWriterWorker(BaseBrickWriterWorker):
     def send_result(self, msg):
         self.resp_sock.send(msg)
 
-def run_zmq_worker(context, req_port, resp_port):
-    worker = ZmqBrickWriterWorker(context, req_port, resp_port)
-    worker.start()
-    return worker
 
 """
 from coverage_model.brick_dispatch import run_test_worker;
