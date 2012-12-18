@@ -17,56 +17,41 @@ import h5py
 import time
 import sys
 
-class BrickWriterWorker(object):
+class BaseBrickWriterWorker(object):
 
-    def __init__(self, req_port, resp_port, name=None):
-        self.name=name or create_guid()
-        self.context = zmq.Context(1)
-
-        # Socket to get work from provisioner
-        self.req_sock = self.context.socket(zmq.REQ)
-        self.req_port = req_port
-        self.req_sock.connect('tcp://localhost:{0}'.format(self.req_port))
-
-        # Socket to respond to responder
-        self.resp_sock = self.context.socket(zmq.PUB)
-        self.resp_port = resp_port
-        self.resp_sock.connect('tcp://localhost:{0}'.format(self.resp_port))
-
+    def __init__(self, name=None):
+        self.name = name or create_guid()
         self._do_stop = False
+        self._setup()
+
+    def start(self):
+        self._do_stop = False
+        self._g=spawn(self._run)
+        log.info('Brick writer worker \'%s\' started: req_port=%s, resp_port=%s', self.name, 'tcp://localhost:{0}'.format(self.req_port), 'tcp://localhost:{0}'.format(self.resp_port))
+        return self._g
 
     def stop(self):
         self._do_stop = True
         self._g.join()
-        self.req_sock.close()
-        self.resp_sock.close()
-        log.debug('Terminating the context')
-        self.context.term()
-        log.debug('Context terminated')
+        self._stop()
 
-    def start(self):
-        self._do_stop = False
-        self._g=spawn(self._run, self.name)
-        log.info('Brick writer worker \'%s\' started: req_port=%s, resp_port=%s', self.name, 'tcp://localhost:{0}'.format(self.req_port), 'tcp://localhost:{0}'.format(self.resp_port))
-        return self._g
+    def _get_work(self):
+        raise NotImplementedError('Not implemented in base class')
 
-    def _run(self, guid):
+    def _send_result(self, msg):
+        raise NotImplementedError('Not implemented in base class')
+
+    def _setup(self):
+        raise NotImplementedError('Not implemented in base class')
+
+    def _stop(self):
+        raise NotImplementedError('Not implemented in base class')
+
+    def _run(self):
+        guid = self.name
         while not self._do_stop:
             try:
-                log.debug('%s making work request', guid)
-                self.req_sock.send(pack((REQUEST_WORK, guid)))
-                msg = None
-                while msg is None:
-                    try:
-                        msg = self.req_sock.recv(zmq.NOBLOCK)
-                    except zmq.ZMQError, e:
-                        if e.errno == zmq.EAGAIN:
-                            if self._do_stop:
-                                break
-                            else:
-                                time.sleep(0.1)
-                        else:
-                            raise
+                msg = self._get_work()
 
                 if msg is not None:
                     brick_key, brick_metrics, work = unpack(msg)
@@ -76,9 +61,9 @@ class BrickWriterWorker(object):
                         brick_path, bD, cD, data_type, fill_value = brick_metrics
                         if data_type == '|O8':
                             data_type = h5py.special_dtype(vlen=str)
-                        # TODO: Uncomment this to properly turn 0 & 1 chunking into True
-#                        if 0 in cD or 1 in cD:
-#                            cD = True
+                            # TODO: Uncomment this to properly turn 0 & 1 chunking into True
+                        #                        if 0 in cD or 1 in cD:
+                        #                            cD = True
                         with h5py.File(brick_path, 'a') as f:
                             # TODO: Due to usage concerns, currently locking chunking to "auto"
                             f.require_dataset(brick_key, shape=bD, dtype=data_type, chunks=True, fillvalue=fill_value)
@@ -92,24 +77,72 @@ class BrickWriterWorker(object):
                                 # Remove the work AFTER it's completed (i.e. written)
                                 work.remove(w)
                         log.debug('*%s*%s* done working on %s', time.time(), guid, brick_key)
-                        self.resp_sock.send(pack((SUCCESS, guid, brick_key, None)))
+                        self._send_result(pack((SUCCESS, guid, brick_key, None)))
                     except Exception as ex:
                         log.error('Exception: %s', ex.message)
                         log.warn('%s send failure response with work %s', guid, work)
                         # TODO: Send the remaining work back
-                        self.resp_sock.send(pack((FAILURE, guid, brick_key, work)))
+                        self._send_result(pack((FAILURE, guid, brick_key, work)))
             except Exception as ex:
                 log.error('Exception: %s', ex.message)
                 log.error('%s send failure response with work %s', guid, None)
                 # TODO: Send a response - I don't know what I was working on...
-                self.resp_sock.send(pack((FAILURE, guid, None, None)))
+                self._send_result(pack((FAILURE, guid, None, None)))
             finally:
-#                time.sleep(0.1)
+            #                time.sleep(0.1)
                 pass
+
+class ZmqBrickWriterWorker(BaseBrickWriterWorker):
+
+    def __init__(self, req_port, resp_port, name=None):
+        self.req_port = req_port
+        self.resp_port = resp_port
+
+        BaseBrickWriterWorker.__init__(self, name=name)
+
+    def _setup(self):
+        self.context = zmq.Context(1)
+
+        # Socket to get work from provisioner
+        self.req_sock = self.context.socket(zmq.REQ)
+        self.req_sock.connect('tcp://localhost:{0}'.format(self.req_port))
+
+        # Socket to respond to responder
+        self.resp_sock = self.context.socket(zmq.PUB)
+        self.resp_sock.connect('tcp://localhost:{0}'.format(self.resp_port))
+
+    def _stop(self):
+        log.debug('Closing sockets')
+        self.req_sock.close()
+        self.resp_sock.close()
+        log.debug('Terminating the context')
+        self.context.term()
+        log.debug('Context terminated')
+
+    def _get_work(self):
+        log.debug('%s making work request', self.name)
+        self.req_sock.send(pack((REQUEST_WORK, self.name)))
+        msg = None
+        while msg is None:
+            try:
+                msg = self.req_sock.recv(zmq.NOBLOCK)
+            except zmq.ZMQError, e:
+                if e.errno == zmq.EAGAIN:
+                    if self._do_stop:
+                        break
+                    else:
+                        time.sleep(0.1)
+                else:
+                    raise
+
+        return msg
+
+    def _send_result(self, msg):
+        self.resp_sock.send(msg)
 
 
 def run_worker(req_port, resp_port):
-    worker = BrickWriterWorker(req_port, resp_port)
+    worker = ZmqBrickWriterWorker(req_port, resp_port)
     worker.start()
     return worker
 
@@ -135,7 +168,7 @@ def main(args=None):
     if len(args) < 3:
         raise SystemError('Must provide request_port and response_port arguments')
 
-    worker = BrickWriterWorker(args[1], args[2])
+    worker = ZmqBrickWriterWorker(args[1], args[2])
     g = worker.start()
     log.info('Worker %s started successfully', worker.name)
 
