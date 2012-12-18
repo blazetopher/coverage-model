@@ -125,12 +125,12 @@ class BaseBrickWriterDispatcher(object):
             self._rec_g.kill()
             log.debug('Greenlets killed')
 
-            log.debug('Shutdown workers')
+            log.debug('Stopping workers')
             # Shutdown workers - work should be completed by now...
             for worker in self.workers:
                 worker.stop()
 
-            log.debug('Workers shutdown')
+            log.debug('Workers stopped')
         except:
             raise
         finally:
@@ -163,7 +163,7 @@ class BaseBrickWriterDispatcher(object):
                 if k not in self._stashed_work and len(w) == 0:
                     log.debug('Discarding empty work')
                     continue
-
+                    # NOTE: Only uncomment the following log statement when debugging interactively - may print lots of information!!
 #                log.debug('Work: %s',w)
 
                 if k in self._active_work:
@@ -192,6 +192,7 @@ class BaseBrickWriterDispatcher(object):
                         w = sv
                         is_list = True # Work is a list going forward!!
 
+                    # NOTE: Only uncomment the following log statement when debugging interactively - may print lots of information!!
 #                    log.debug('Work: %s',w)
 
                     # The work_key is not yet pending
@@ -255,7 +256,7 @@ class BaseBrickWriterDispatcher(object):
                         self._active_work[work_key] = (worker_guid, pw)
                         self.send_work(pw)
             finally:
-            #       e         time.sleep(0.1)
+#                time.sleep(0.1)
                 pass
 
     def _work_result_receiver(self):
@@ -310,7 +311,7 @@ class BaseBrickWriterDispatcher(object):
                             _, wm, wk = unpack(pw)
                             self.put_work(work_key, wm, work)
             finally:
-            #                time.sleep(0.1)
+#                time.sleep(0.1)
                 pass
 
     def _add_failure(self, wp):

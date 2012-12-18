@@ -27,18 +27,20 @@ class BaseBrickWriterWorker(object):
     def start(self):
         self._do_stop = False
         self._g=spawn(self._run)
-        log.info('Brick writer worker \'%s\' started: req_port=%s, resp_port=%s', self.name, 'tcp://localhost:{0}'.format(self.req_port), 'tcp://localhost:{0}'.format(self.resp_port))
+        log.info('Worker \'%s\' started', self.name)
         return self._g
 
     def stop(self):
         self._do_stop = True
         self._g.join()
         self._stop()
+        log.debug('Worker \'%s\' stopped', self.name)
 
     def _run(self):
         guid = self.name
         while not self._do_stop:
             try:
+                log.debug('%s making work request', self.name)
                 msg = self.get_work()
 
                 if msg is not None:
@@ -47,7 +49,7 @@ class BaseBrickWriterWorker(object):
                     try:
                         log.debug('Worker \'%s\' got work for brick \'%s\'', guid, brick_key)
                         # NOTE: Only uncomment the following log statement when debugging interactively - may print lots of information!!
-                        #                        log.debug('Worker \'%s\' got work for brick \'%s\':\nbrick_metrics==%s\nwork==%s', guid, brick_key, brick_metrics, work)
+#                        log.debug('Worker \'%s\' got work for brick \'%s\':\nbrick_metrics==%s\nwork==%s', guid, brick_key, brick_metrics, work)
                         brick_path, bD, cD, data_type, fill_value = brick_metrics
                         if data_type == '|O8':
                             data_type = h5py.special_dtype(vlen=str)
@@ -62,7 +64,7 @@ class BaseBrickWriterWorker(object):
                                 if isinstance(brick_slice, tuple):
                                     brick_slice = list(brick_slice)
 
-                                #                                log.debug('slice_=%s, value=%s', brick_slice, value)
+#                                log.debug('slice_=%s, value=%s', brick_slice, value)
                                 f[brick_key].__setitem__(*brick_slice, val=value)
                                 # Remove the work AFTER it's completed (i.e. written)
                                 work.remove(w)
@@ -79,7 +81,7 @@ class BaseBrickWriterWorker(object):
                 # TODO: Send a response - I don't know what I was working on...
                 self.send_result(pack((FAILURE, guid, None, None)))
             finally:
-            #                time.sleep(0.1)
+#                time.sleep(0.1)
                 pass
 
     #############################################################
@@ -111,10 +113,12 @@ class ZmqBrickWriterWorker(BaseBrickWriterWorker):
         # Socket to get work from provisioner
         self.req_sock = self.context.socket(zmq.REQ)
         self.req_sock.connect('tcp://localhost:{0}'.format(self.req_port))
+        log.debug('Worker \'%s\' request port: tcp://localhost:{0}'.format(self.req_port))
 
         # Socket to respond to responder
         self.resp_sock = self.context.socket(zmq.PUB)
         self.resp_sock.connect('tcp://localhost:{0}'.format(self.resp_port))
+        log.debug('Worker \'%s\' response port: tcp://localhost:{0}'.format(self.resp_port))
 
     def _stop(self):
         log.debug('Worker \'%s\' closing sockets', self.name)
@@ -122,7 +126,6 @@ class ZmqBrickWriterWorker(BaseBrickWriterWorker):
         self.resp_sock.close()
 
     def get_work(self):
-        log.debug('%s making work request', self.name)
         self.req_sock.send(pack((REQUEST_WORK, self.name)))
         msg = None
         while msg is None:
