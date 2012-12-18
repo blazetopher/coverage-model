@@ -164,7 +164,7 @@ class BaseBrickWriterDispatcher(object):
                     log.debug('Discarding empty work')
                     continue
 
-                log.debug('Work: %s',w)
+#                log.debug('Work: %s',w)
 
                 if k in self._active_work:
                     log.debug('Do Stash')
@@ -181,7 +181,9 @@ class BaseBrickWriterDispatcher(object):
                 else:
                     # If there is a stash for this work_key, prepend it to work
                     if k in self._stashed_work:
-                        log.debug('Was a stash, prepend: %s, %s', self._stashed_work[k], w)
+                        log.debug('Stashed work exists, prepending it to the current work')
+                        # NOTE: Only uncomment the following log statement when debugging interactively - may print lots of information!!
+#                        log.debug('Was a stash, prepend: %s, %s', self._stashed_work[k], w)
                         _, sv=self._stashed_work.pop(k)
                         if is_list:
                             sv.extend(w[:])
@@ -190,7 +192,7 @@ class BaseBrickWriterDispatcher(object):
                         w = sv
                         is_list = True # Work is a list going forward!!
 
-                    log.debug('Work: %s',w)
+#                    log.debug('Work: %s',w)
 
                     # The work_key is not yet pending
                     not_in_pend = k not in self._pending_work
@@ -201,7 +203,9 @@ class BaseBrickWriterDispatcher(object):
                         self._pending_work[k] = (wm, [])
 
                     # Add the work to the pending
-                    log.debug('-> adding work to \'%s\': %s', k, w)
+                    log.debug('-> adding work to \'%s\'', k)
+                    # NOTE: Only uncomment the following log statement when debugging interactively - may print lots of information!!
+#                    log.debug('-> adding work to \'%s\': %s', k, w)
                     if is_list:
                         self._pending_work[k][1].extend(w[:])
                     else:
@@ -239,11 +243,13 @@ class BaseBrickWriterDispatcher(object):
                                 time.sleep(0.1)
 
                     if work_key is not None:
-                        log.debug('Assign work for %s', work_key)
+                        log.debug('Preparing work key %s', work_key)
                         work_metrics, work = self._pending_work.pop(work_key)
 
                         wp = (work_key, work_metrics, work)
-                        log.debug('Assigning to %s: %s', work_key, wp)
+                        log.debug('Assigning work to worker \'%s\': work_key==%s', worker_guid, work_key)
+                        # NOTE: Only uncomment the following log statement when debugging interactively - may print lots of information!!
+#                        log.debug('Assigning work to worker \'%s\': work==%s', worker_guid, work)
                         pw = pack(wp)
 
                         self._active_work[work_key] = (worker_guid, pw)

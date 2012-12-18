@@ -57,7 +57,9 @@ class BaseBrickWriterWorker(object):
                     brick_key, brick_metrics, work = unpack(msg)
                     work=list(work) # lists decode as a tuples
                     try:
-                        log.debug('*%s*%s* got work for %s, metrics %s: %s', time.time(), guid, brick_key, brick_metrics, work)
+                        log.debug('Worker \'%s\' got work for brick \'%s\'', guid, brick_key)
+                        # NOTE: Only uncomment the following log statement when debugging interactively - may print lots of information!!
+#                        log.debug('Worker \'%s\' got work for brick \'%s\':\nbrick_metrics==%s\nwork==%s', guid, brick_key, brick_metrics, work)
                         brick_path, bD, cD, data_type, fill_value = brick_metrics
                         if data_type == '|O8':
                             data_type = h5py.special_dtype(vlen=str)
@@ -72,20 +74,20 @@ class BaseBrickWriterWorker(object):
                                 if isinstance(brick_slice, tuple):
                                     brick_slice = list(brick_slice)
 
-                                log.debug('slice_=%s, value=%s', brick_slice, value)
+#                                log.debug('slice_=%s, value=%s', brick_slice, value)
                                 f[brick_key].__setitem__(*brick_slice, val=value)
                                 # Remove the work AFTER it's completed (i.e. written)
                                 work.remove(w)
-                        log.debug('*%s*%s* done working on %s', time.time(), guid, brick_key)
+                        log.debug('Worker \'%s\' finished working on brick \'%s\'', guid, brick_key)
                         self._send_result(pack((SUCCESS, guid, brick_key, None)))
                     except Exception as ex:
                         log.error('Exception: %s', ex.message)
-                        log.warn('%s send failure response with work %s', guid, work)
+                        log.warn('Worker \'%s\' send failure response for brick\'%s\'', guid, brick_key)
                         # TODO: Send the remaining work back
                         self._send_result(pack((FAILURE, guid, brick_key, work)))
             except Exception as ex:
                 log.error('Exception: %s', ex.message)
-                log.error('%s send failure response with work %s', guid, None)
+                log.error('Worker \'%s\' send failure response, unknown brick', guid)
                 # TODO: Send a response - I don't know what I was working on...
                 self._send_result(pack((FAILURE, guid, None, None)))
             finally:
