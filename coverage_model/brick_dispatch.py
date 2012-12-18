@@ -430,8 +430,57 @@ class ZmqBrickWriterDispatcher(BaseBrickWriterDispatcher):
 
         return msg
 
+class QueueBrickWriterDispatcher(BaseBrickWriterDispatcher):
 
-class BrickWriterDispatcher(ZmqBrickWriterDispatcher):
+    def __init__(self, failure_callback, num_workers=1):
+        BaseBrickWriterDispatcher.__init__(self, failure_callback=failure_callback, num_workers=num_workers)
+
+    def _setup(self):
+        self._request_queue = queue.Queue()
+        self._work_queue = queue.Queue()
+        self._result_queue = queue.Queue()
+
+    def _configure_workers(self):
+        from brick_worker import QueueBrickWriterWorker
+        for x in xrange(self.num_workers):
+            worker = QueueBrickWriterWorker(self._request_queue, self._work_queue, self._result_queue)
+            worker.start()
+            self.workers.append(worker)
+
+    def _shutdown(self):
+        # Is there anything to do here?
+        pass
+
+    def receive_work_request(self):
+        msg = None
+        while msg is None:
+            try:
+                msg = self._request_queue.get(block=False)
+            except queue.Empty:
+                if self._do_stop:
+                    break
+                else:
+                    time.sleep(0.1)
+
+        return msg
+
+    def send_work(self, msg):
+        self._work_queue.put(msg)
+
+    def receive_work_result(self):
+        msg = None
+        while msg is None:
+            try:
+                msg = self._result_queue.get(block=False)
+            except queue.Empty:
+                if self._do_stop:
+                    break
+                else:
+                    time.sleep(0.1)
+
+        return msg
+
+class BrickWriterDispatcher(QueueBrickWriterDispatcher):
     pass
 
 def run_test_dispatcher(work_count, num_workers=1):

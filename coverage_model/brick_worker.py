@@ -13,6 +13,7 @@ import logging
 from coverage_model.brick_dispatch import pack, unpack, FAILURE, REQUEST_WORK, SUCCESS
 from coverage_model.utils import create_guid
 from gevent_zeromq import zmq
+from gevent import queue
 import h5py
 import time
 import sys
@@ -144,6 +145,40 @@ class ZmqBrickWriterWorker(BaseBrickWriterWorker):
 
     def send_result(self, msg):
         self.resp_sock.send(msg)
+
+class QueueBrickWriterWorker(BaseBrickWriterWorker):
+
+    def __init__(self, request_queue, work_queue, result_queue, name=None):
+        self._request_queue = request_queue
+        self._work_queue = work_queue
+        self._result_queue = result_queue
+
+        BaseBrickWriterWorker.__init__(self, name=name)
+
+    def _setup(self):
+        # Is there anything to do here?
+        pass
+
+    def _stop(self):
+        # Is there anything to do here?
+        pass
+
+    def get_work(self):
+        self._request_queue.put(pack((REQUEST_WORK, self.name)))
+        msg = None
+        while msg is None:
+            try:
+                msg = self._work_queue.get(block=False)
+            except queue.Empty:
+                if self._do_stop:
+                    break
+                else:
+                    time.sleep(0.1)
+
+        return msg
+
+    def send_result(self, msg):
+        self._result_queue.put(msg)
 
 
 """
