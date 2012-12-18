@@ -35,23 +35,11 @@ class BaseBrickWriterWorker(object):
         self._g.join()
         self._stop()
 
-    def _get_work(self):
-        raise NotImplementedError('Not implemented in base class')
-
-    def _send_result(self, msg):
-        raise NotImplementedError('Not implemented in base class')
-
-    def _setup(self):
-        raise NotImplementedError('Not implemented in base class')
-
-    def _stop(self):
-        raise NotImplementedError('Not implemented in base class')
-
     def _run(self):
         guid = self.name
         while not self._do_stop:
             try:
-                msg = self._get_work()
+                msg = self.get_work()
 
                 if msg is not None:
                     brick_key, brick_metrics, work = unpack(msg)
@@ -59,7 +47,7 @@ class BaseBrickWriterWorker(object):
                     try:
                         log.debug('Worker \'%s\' got work for brick \'%s\'', guid, brick_key)
                         # NOTE: Only uncomment the following log statement when debugging interactively - may print lots of information!!
-#                        log.debug('Worker \'%s\' got work for brick \'%s\':\nbrick_metrics==%s\nwork==%s', guid, brick_key, brick_metrics, work)
+                        #                        log.debug('Worker \'%s\' got work for brick \'%s\':\nbrick_metrics==%s\nwork==%s', guid, brick_key, brick_metrics, work)
                         brick_path, bD, cD, data_type, fill_value = brick_metrics
                         if data_type == '|O8':
                             data_type = h5py.special_dtype(vlen=str)
@@ -74,25 +62,41 @@ class BaseBrickWriterWorker(object):
                                 if isinstance(brick_slice, tuple):
                                     brick_slice = list(brick_slice)
 
-#                                log.debug('slice_=%s, value=%s', brick_slice, value)
+                                #                                log.debug('slice_=%s, value=%s', brick_slice, value)
                                 f[brick_key].__setitem__(*brick_slice, val=value)
                                 # Remove the work AFTER it's completed (i.e. written)
                                 work.remove(w)
                         log.debug('Worker \'%s\' finished working on brick \'%s\'', guid, brick_key)
-                        self._send_result(pack((SUCCESS, guid, brick_key, None)))
+                        self.send_result(pack((SUCCESS, guid, brick_key, None)))
                     except Exception as ex:
                         log.error('Exception: %s', ex.message)
                         log.warn('Worker \'%s\' send failure response for brick\'%s\'', guid, brick_key)
                         # TODO: Send the remaining work back
-                        self._send_result(pack((FAILURE, guid, brick_key, work)))
+                        self.send_result(pack((FAILURE, guid, brick_key, work)))
             except Exception as ex:
                 log.error('Exception: %s', ex.message)
                 log.error('Worker \'%s\' send failure response, unknown brick', guid)
                 # TODO: Send a response - I don't know what I was working on...
-                self._send_result(pack((FAILURE, guid, None, None)))
+                self.send_result(pack((FAILURE, guid, None, None)))
             finally:
             #                time.sleep(0.1)
                 pass
+
+    #############################################################
+    ## Unimplemented functions to be overridden by sub-classes ##
+    #############################################################
+
+    def _setup(self):
+        raise NotImplementedError('Not implemented in base class')
+
+    def _stop(self):
+        raise NotImplementedError('Not implemented in base class')
+
+    def get_work(self):
+        raise NotImplementedError('Not implemented in base class')
+
+    def send_result(self, msg):
+        raise NotImplementedError('Not implemented in base class')
 
 class ZmqBrickWriterWorker(BaseBrickWriterWorker):
 
@@ -116,11 +120,8 @@ class ZmqBrickWriterWorker(BaseBrickWriterWorker):
         log.debug('Worker \'%s\' closing sockets', self.name)
         self.req_sock.close()
         self.resp_sock.close()
-#        log.debug('Terminating the context')
-#        self.context.term()
-#        log.debug('Context terminated')
 
-    def _get_work(self):
+    def get_work(self):
         log.debug('%s making work request', self.name)
         self.req_sock.send(pack((REQUEST_WORK, self.name)))
         msg = None
@@ -138,7 +139,7 @@ class ZmqBrickWriterWorker(BaseBrickWriterWorker):
 
         return msg
 
-    def _send_result(self, msg):
+    def send_result(self, msg):
         self.resp_sock.send(msg)
 
 def run_zmq_worker(context, req_port, resp_port):

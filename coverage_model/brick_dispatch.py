@@ -93,10 +93,10 @@ class BaseBrickWriterDispatcher(object):
 
     def run(self):
         self._do_stop = False
-        self._org_g = spawn(self.organize_work)
+        self._org_g = spawn(self._work_organizer)
 
-        self._prov_g = spawn(self.provisioner)
-        self._rec_g = spawn(self.receiver)
+        self._prov_g = spawn(self._work_provisioner)
+        self._rec_g = spawn(self._work_result_receiver)
 
     def shutdown(self, force=False, timeout=None):
         if self._is_shutdown:
@@ -142,7 +142,7 @@ class BaseBrickWriterDispatcher(object):
             raise SystemError('This BrickDispatcher has been shutdown and cannot process more work!')
         self.prep_queue.put((work_key, work_metrics, work))
 
-    def organize_work(self):
+    def _work_organizer(self):
         while True:
             if self._do_stop and self.prep_queue.empty():
                 break
@@ -217,7 +217,7 @@ class BaseBrickWriterDispatcher(object):
             except:
                 raise
 
-    def provisioner(self):
+    def _work_provisioner(self):
         while True:
             try:
                 if self._do_stop and self.work_queue.empty():
@@ -225,7 +225,7 @@ class BaseBrickWriterDispatcher(object):
                 log.debug('Receive work request (loop)')
 
                 try:
-                    msg = self._receive_work_request()
+                    msg = self.receive_work_request()
                 except BreakError:
                     break
 
@@ -253,12 +253,12 @@ class BaseBrickWriterDispatcher(object):
                         pw = pack(wp)
 
                         self._active_work[work_key] = (worker_guid, pw)
-                        self._send_work(pw)
+                        self.send_work(pw)
             finally:
             #       e         time.sleep(0.1)
                 pass
 
-    def receiver(self):
+    def _work_result_receiver(self):
         while True:
             try:
                 if self._do_stop and len(self._active_work) == 0:
@@ -267,7 +267,7 @@ class BaseBrickWriterDispatcher(object):
                 log.debug('Receive response message (loop)')
 
                 try:
-                    msg = self._receive_work_result()
+                    msg = self.receive_work_result()
                 except BreakError:
                     break
 
@@ -324,14 +324,9 @@ class BaseBrickWriterDispatcher(object):
         if self._failures[pwp] > WORK_FAILURE_RETRIES:
             raise ValueError('Maximum failure retries exceeded')
 
-    def _receive_work_request(self):
-        raise NotImplementedError('Not implemented in base class')
-
-    def _send_work(self, msg):
-        raise NotImplementedError('Not implemented in base class')
-
-    def _receive_work_result(self):
-        raise NotImplementedError('Not implemented in base class')
+    #############################################################
+    ## Unimplemented functions to be overridden by sub-classes ##
+    #############################################################
 
     def _setup(self):
         raise NotImplementedError('Not implemented in base class')
@@ -340,6 +335,15 @@ class BaseBrickWriterDispatcher(object):
         raise NotImplementedError('Not implemented in base class')
 
     def _shutdown(self):
+        raise NotImplementedError('Not implemented in base class')
+
+    def receive_work_request(self):
+        raise NotImplementedError('Not implemented in base class')
+
+    def send_work(self, msg):
+        raise NotImplementedError('Not implemented in base class')
+
+    def receive_work_result(self):
         raise NotImplementedError('Not implemented in base class')
 
 
@@ -383,7 +387,7 @@ class BrickWriterDispatcher(BaseBrickWriterDispatcher):
         self.context.term()
         log.debug('Context terminated')
 
-    def _receive_work_request(self):
+    def receive_work_request(self):
         if self.prov_sock.closed:
             raise BreakError()
 
@@ -402,10 +406,10 @@ class BrickWriterDispatcher(BaseBrickWriterDispatcher):
 
         return msg
 
-    def _send_work(self, msg):
+    def send_work(self, msg):
         self.prov_sock.send(msg)
 
-    def _receive_work_result(self):
+    def receive_work_result(self):
         if self.resp_sock.closed:
             raise BreakError()
 
