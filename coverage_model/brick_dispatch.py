@@ -364,7 +364,7 @@ class BrickWriterDispatcher(BaseBrickWriterDispatcher):
     def _configure_workers(self):
         from brick_worker import run_zmq_worker
         for x in xrange(self.num_workers):
-            worker = run_zmq_worker(self.prov_port, self.resp_port)
+            worker = run_zmq_worker(self.context, self.prov_port, self.resp_port)
             self.workers.append(worker)
 
     def _shutdown(self):

@@ -94,15 +94,14 @@ class BaseBrickWriterWorker(object):
 
 class ZmqBrickWriterWorker(BaseBrickWriterWorker):
 
-    def __init__(self, req_port, resp_port, name=None):
+    def __init__(self, context, req_port, resp_port, name=None):
+        self.context = context
         self.req_port = req_port
         self.resp_port = resp_port
 
         BaseBrickWriterWorker.__init__(self, name=name)
 
     def _setup(self):
-        self.context = zmq.Context(1)
-
         # Socket to get work from provisioner
         self.req_sock = self.context.socket(zmq.REQ)
         self.req_sock.connect('tcp://localhost:{0}'.format(self.req_port))
@@ -112,12 +111,12 @@ class ZmqBrickWriterWorker(BaseBrickWriterWorker):
         self.resp_sock.connect('tcp://localhost:{0}'.format(self.resp_port))
 
     def _stop(self):
-        log.debug('Closing sockets')
+        log.debug('Worker \'%s\' closing sockets', self.name)
         self.req_sock.close()
         self.resp_sock.close()
-        log.debug('Terminating the context')
-        self.context.term()
-        log.debug('Context terminated')
+#        log.debug('Terminating the context')
+#        self.context.term()
+#        log.debug('Context terminated')
 
     def _get_work(self):
         log.debug('%s making work request', self.name)
@@ -140,8 +139,8 @@ class ZmqBrickWriterWorker(BaseBrickWriterWorker):
     def _send_result(self, msg):
         self.resp_sock.send(msg)
 
-def run_zmq_worker(req_port, resp_port):
-    worker = ZmqBrickWriterWorker(req_port, resp_port)
+def run_zmq_worker(context, req_port, resp_port):
+    worker = ZmqBrickWriterWorker(context, req_port, resp_port)
     worker.start()
     return worker
 
