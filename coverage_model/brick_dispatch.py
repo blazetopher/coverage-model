@@ -347,7 +347,7 @@ class BaseBrickWriterDispatcher(object):
         raise NotImplementedError('Not implemented in base class')
 
 
-class BrickWriterDispatcher(BaseBrickWriterDispatcher):
+class ZmqBrickWriterDispatcher(BaseBrickWriterDispatcher):
 
     def __init__(self, failure_callback, num_workers=1):
         BaseBrickWriterDispatcher.__init__(self, failure_callback=failure_callback, num_workers=num_workers)
@@ -427,6 +427,10 @@ class BrickWriterDispatcher(BaseBrickWriterDispatcher):
                     raise
 
         return msg
+
+
+class BrickWriterDispatcher(ZmqBrickWriterDispatcher):
+    pass
 
 def run_test_dispatcher(work_count, num_workers=1):
     # Set up temporary directories to save data
