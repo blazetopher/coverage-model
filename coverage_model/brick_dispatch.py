@@ -39,9 +39,12 @@ def pack(msg):
 def unpack(msg):
     return unpackb(msg, object_hook=decode_ion)
 
-class BrickWriterDispatcher(object):
+class BreakError(Exception):
+    pass
 
-    def __init__(self, failure_callback, num_workers=1, pidantic_dir=None, working_dir=None):
+class BaseBrickWriterDispatcher(object):
+
+    def __init__(self, failure_callback, num_workers=1):
         self.guid = create_guid()
         self.prep_queue = queue.Queue()
         self.work_queue = queue.Queue()
@@ -51,84 +54,15 @@ class BrickWriterDispatcher(object):
         self._failures = {}
         self._do_stop = False
         self._count = -1
-        self._shutdown = False
+        self._is_shutdown = False
         self._failure_callback = failure_callback
-
-        self.context = zmq.Context(1)
-        self.prov_sock = self.context.socket(zmq.REP)
-        self.prov_port = self._get_port(self.prov_sock)
-        log.info('Provisioning url: tcp://*:{0}'.format(self.prov_port))
-
-        self.resp_sock = self.context.socket(zmq.SUB)
-        self.resp_port = self._get_port(self.resp_sock)
-        self.resp_sock.setsockopt(zmq.SUBSCRIBE, '')
-        log.info('Response url: tcp://*:{0}'.format(self.resp_port))
 
         self.num_workers = num_workers if num_workers > 0 else 1
         self.is_single_worker = self.num_workers == 1
-        self.working_dir = working_dir or '.'
-        self.pidantic_dir = pidantic_dir or './pid_dir'
         self.workers = []
 
+        self._setup()
         self._configure_workers()
-
-    def _get_port(self, socket):
-        for x in xrange(PORT_RANGE[0], PORT_RANGE[1]):
-            try:
-                socket.bind('tcp://*:{0}'.format(x))
-                return x
-            except ZMQError:
-                continue
-
-    def _configure_workers(self):
-        # TODO: if num_workers == 1, simply run one in-line (runs in a greenlet anyhow)
-        if self.is_single_worker:
-            from brick_worker import run_worker
-            worker = run_worker(self.prov_port, self.resp_port)
-            self.workers.append(worker)
-        else:
-            if os.path.exists(self.pidantic_dir):
-                bdp = os.path.join(self.pidantic_dir, 'brick_dispatch')
-                if os.path.exists(bdp):
-                    import zipfile, zlib
-                    with zipfile.ZipFile(os.path.join(bdp, 'archived_worker_logs.zip'), 'a', zipfile.ZIP_DEFLATED) as f:
-                        names = f.namelist()
-                        for x in [x for x in os.listdir(bdp) if x.startswith('worker_') and x not in names]:
-                            fn = os.path.join(bdp, x)
-                            f.write(filename=fn, arcname=x)
-                            os.remove(fn)
-
-            else:
-                os.makedirs(self.pidantic_dir)
-
-            self.factory = SupDPidanticFactory(name='brick_dispatch', directory=self.pidantic_dir)
-            # Check for old workers - FOR NOW, TERMINATE THEM TODO: These should be reusable...
-            old_workers = self.factory.reload_instances()
-            for x in old_workers:
-                old_workers[x].cleanup()
-
-            worker_cmd = 'bin/python coverage_model/brick_worker.py {0} {1}'.format(self.prov_port, self.resp_port)
-            for x in xrange(self.num_workers):
-                w = self.factory.get_pidantic(command=worker_cmd, process_name='worker_{0}'.format(x), directory=os.path.realpath(self.working_dir))
-                w.start()
-                self.workers.append(w)
-
-            ready=False
-            while not ready:
-                self.factory.poll()
-                for x in self.workers:
-                    s = x.get_state()
-                    if s is PIDanticState.STATE_STARTING:
-                        break
-                    elif s is PIDanticState.STATE_RUNNING:
-                        continue
-                    elif s is PIDanticState.STATE_EXITED:
-                        self.shutdown()
-                        raise SystemError('Error starting worker - cannot continue')
-                    else:
-                        raise SystemError('Problem starting worker - cannot continue')
-
-                ready = True
 
     def has_pending_work(self):
         return len(self._pending_work) > 0
@@ -169,12 +103,12 @@ class BrickWriterDispatcher(object):
         self._rec_g = spawn(self.receiver)
 
     def shutdown(self, force=False, timeout=None):
-        if self._shutdown:
+        if self._is_shutdown:
             return
-        # CBM TODO: Revisit to ensure this won't strand work or terminate workers before they complete their work...!!
+            # CBM TODO: Revisit to ensure this won't strand work or terminate workers before they complete their work...!!
         self._do_stop = True
         try:
-            log.debug('Force == %s', force)
+            log.debug('Shutdown:  force == %s', force)
             if not force:
                 log.debug('Waiting for organizer; timeout == %s',timeout)
                 # Wait for the organizer to finish - ensures the prep_queue is empty
@@ -210,16 +144,13 @@ class BrickWriterDispatcher(object):
         except:
             raise
         finally:
-            log.debug('Closing provisioner and receiver sockets')
-            # Close sockets
-            self.prov_sock.close()
-            self.resp_sock.close()
-            log.debug('Sockets closed')
-            log.debug('Terminating the context')
-            self.context.term()
-            log.debug('Context terminated')
+            self._shutdown()
+            self._is_shutdown = True
 
-            self._shutdown = True
+    def put_work(self, work_key, work_metrics, work):
+        if self._is_shutdown:
+            raise SystemError('This BrickDispatcher has been shutdown and cannot process more work!')
+        self.prep_queue.put((work_key, work_metrics, work))
 
     def organize_work(self):
         while True:
@@ -292,44 +223,58 @@ class BrickWriterDispatcher(object):
             except:
                 raise
 
-
-    def put_work(self, work_key, work_metrics, work):
-        if self._shutdown:
-            raise SystemError('This BrickDispatcher has been shutdown and cannot process more work!')
-        self.prep_queue.put((work_key, work_metrics, work))
-
-    def _add_failure(self, wp):
-        pwp = pack(wp)
-        log.warn('Adding to _failures: %s', pwp)
-        if pwp in self._failures:
-            self._failures[pwp] += 1
-        else:
-            self._failures[pwp] = 1
-
-        if self._failures[pwp] > WORK_FAILURE_RETRIES:
-            raise ValueError('Maximum failure retries exceeded')
-
-    def receiver(self):
+    def provisioner(self):
         while True:
             try:
-                if self.resp_sock.closed:
+                if self._do_stop and self.work_queue.empty():
                     break
-                if self._do_stop and len(self._active_work) == 0:
+                log.debug('Receive work request (loop)')
+
+                try:
+                    msg = self._receive_work_request()
+                except BreakError:
                     break
 
-                log.debug('Receive response message (loop)')
-                msg = None
-                while msg is None:
-                    try:
-                        msg = self.resp_sock.recv(zmq.NOBLOCK)
-                    except zmq.ZMQError, e:
-                        if e.errno == zmq.EAGAIN:
+                if msg is not None:
+                    _, worker_guid = unpack(msg)
+                    log.debug('Get work from work_queue (loop)')
+                    work_key = None
+                    while work_key is None:
+                        try:
+                            work_key = self.work_queue.get(block=False)
+                        except queue.Empty:
                             if self._do_stop:
                                 break
                             else:
                                 time.sleep(0.1)
-                        else:
-                            raise
+
+                    if work_key is not None:
+                        log.debug('Assign work for %s', work_key)
+                        work_metrics, work = self._pending_work.pop(work_key)
+
+                        wp = (work_key, work_metrics, work)
+                        log.debug('Assigning to %s: %s', work_key, wp)
+                        pw = pack(wp)
+
+                        self._active_work[work_key] = (worker_guid, pw)
+                        self._send_work(pw)
+            finally:
+            #       e         time.sleep(0.1)
+                pass
+
+
+    def receiver(self):
+        while True:
+            try:
+                if self._do_stop and len(self._active_work) == 0:
+                    break
+
+                log.debug('Receive response message (loop)')
+
+                try:
+                    msg = self._receive_work_result()
+                except BreakError:
+                    break
 
                 if msg is not None:
                     resp_type, worker_guid, work_key, work = unpack(msg)
@@ -370,57 +315,166 @@ class BrickWriterDispatcher(object):
                             _, wm, wk = unpack(pw)
                             self.put_work(work_key, wm, work)
             finally:
-#                time.sleep(0.1)
+            #                time.sleep(0.1)
                 pass
 
-    def provisioner(self):
-        while True:
+    def _add_failure(self, wp):
+        pwp = pack(wp)
+        log.warn('Adding to _failures: %s', pwp)
+        if pwp in self._failures:
+            self._failures[pwp] += 1
+        else:
+            self._failures[pwp] = 1
+
+        if self._failures[pwp] > WORK_FAILURE_RETRIES:
+            raise ValueError('Maximum failure retries exceeded')
+
+    def _receive_work_request(self):
+        raise NotImplementedError('Not implemented in base class')
+
+    def _send_work(self, msg):
+        raise NotImplementedError('Not implemented in base class')
+
+    def _receive_work_result(self):
+        raise NotImplementedError('Not implemented in base class')
+
+    def _setup(self):
+        raise NotImplementedError('Not implemented in base class')
+
+    def _configure_workers(self):
+        raise NotImplementedError('Not implemented in base class')
+
+    def _shutdown(self):
+        raise NotImplementedError('Not implemented in base class')
+
+
+class BrickWriterDispatcher(BaseBrickWriterDispatcher):
+
+    def __init__(self, failure_callback, num_workers=1, pidantic_dir=None, working_dir=None):
+        self.working_dir = working_dir or '.'
+        self.pidantic_dir = pidantic_dir or './pid_dir'
+
+        BaseBrickWriterDispatcher.__init__(self, failure_callback=failure_callback, num_workers=num_workers)
+
+    def _setup(self):
+        self.context = zmq.Context(1)
+        self.prov_sock = self.context.socket(zmq.REP)
+        self.prov_port = self._get_port(self.prov_sock)
+        log.info('Provisioning url: tcp://*:{0}'.format(self.prov_port))
+
+        self.resp_sock = self.context.socket(zmq.SUB)
+        self.resp_port = self._get_port(self.resp_sock)
+        self.resp_sock.setsockopt(zmq.SUBSCRIBE, '')
+        log.info('Response url: tcp://*:{0}'.format(self.resp_port))
+
+    def _get_port(self, socket):
+        for x in xrange(PORT_RANGE[0], PORT_RANGE[1]):
             try:
-                if self.prov_sock.closed:
-                    break
-                if self._do_stop and self.work_queue.empty():
-                    break
+                socket.bind('tcp://*:{0}'.format(x))
+                return x
+            except ZMQError:
+                continue
 
-                log.debug('Receive work request (loop)')
-                msg = None
-                while msg is None:
-                    try:
-                        msg = self.prov_sock.recv(zmq.NOBLOCK)
-                    except zmq.ZMQError, e:
-                        if e.errno == zmq.EAGAIN:
-                            if self._do_stop:
-                                break
-                            else:
-                                time.sleep(0.1)
-                        else:
-                            raise
+    def _configure_workers(self):
+        # TODO: if num_workers == 1, simply run one in-line (runs in a greenlet anyhow)
+        if self.is_single_worker:
+            from brick_worker import run_zmq_worker
+            worker = run_zmq_worker(self.prov_port, self.resp_port)
+            self.workers.append(worker)
+        else:
+            if os.path.exists(self.pidantic_dir):
+                bdp = os.path.join(self.pidantic_dir, 'brick_dispatch')
+                if os.path.exists(bdp):
+                    import zipfile, zlib
+                    with zipfile.ZipFile(os.path.join(bdp, 'archived_worker_logs.zip'), 'a', zipfile.ZIP_DEFLATED) as f:
+                        names = f.namelist()
+                        for x in [x for x in os.listdir(bdp) if x.startswith('worker_') and x not in names]:
+                            fn = os.path.join(bdp, x)
+                            f.write(filename=fn, arcname=x)
+                            os.remove(fn)
 
-                if msg is not None:
-                    _, worker_guid = unpack(msg)
-                    log.debug('Get work from work_queue (loop)')
-                    work_key = None
-                    while work_key is None:
-                        try:
-                            work_key = self.work_queue.get(block=False)
-                        except queue.Empty:
-                            if self._do_stop:
-                                break
-                            else:
-                                time.sleep(0.1)
+            else:
+                os.makedirs(self.pidantic_dir)
 
-                    if work_key is not None:
-                        log.debug('Assign work for %s', work_key)
-                        work_metrics, work = self._pending_work.pop(work_key)
+            self.factory = SupDPidanticFactory(name='brick_dispatch', directory=self.pidantic_dir)
+            # Check for old workers - FOR NOW, TERMINATE THEM TODO: These should be reusable...
+            old_workers = self.factory.reload_instances()
+            for x in old_workers:
+                old_workers[x].cleanup()
 
-                        wp = (work_key, work_metrics, work)
-                        log.debug('Assigning to %s: %s', work_key, wp)
-                        pw = pack(wp)
+            worker_cmd = 'bin/python coverage_model/brick_worker.py {0} {1}'.format(self.prov_port, self.resp_port)
+            for x in xrange(self.num_workers):
+                w = self.factory.get_pidantic(command=worker_cmd, process_name='worker_{0}'.format(x), directory=os.path.realpath(self.working_dir))
+                w.start()
+                self.workers.append(w)
 
-                        self._active_work[work_key] = (worker_guid, pw)
-                        self.prov_sock.send(pw)
-            finally:
-#       e         time.sleep(0.1)
-                pass
+            ready=False
+            while not ready:
+                self.factory.poll()
+                for x in self.workers:
+                    s = x.get_state()
+                    if s is PIDanticState.STATE_STARTING:
+                        break
+                    elif s is PIDanticState.STATE_RUNNING:
+                        continue
+                    elif s is PIDanticState.STATE_EXITED:
+                        self.shutdown()
+                        raise SystemError('Error starting worker - cannot continue')
+                    else:
+                        raise SystemError('Problem starting worker - cannot continue')
+
+                ready = True
+
+    def _shutdown(self):
+        log.debug('Closing provisioner and receiver sockets')
+        # Close sockets
+        self.prov_sock.close()
+        self.resp_sock.close()
+        log.debug('Sockets closed')
+        log.debug('Terminating the context')
+        self.context.term()
+        log.debug('Context terminated')
+
+    def _receive_work_request(self):
+        if self.prov_sock.closed:
+            raise BreakError()
+
+        msg = None
+        while msg is None:
+            try:
+                msg = self.prov_sock.recv(zmq.NOBLOCK)
+            except zmq.ZMQError, e:
+                if e.errno == zmq.EAGAIN:
+                    if self._do_stop:
+                        break
+                    else:
+                        time.sleep(0.1)
+                else:
+                    raise
+
+        return msg
+
+    def _send_work(self, msg):
+        self.prov_sock.send(msg)
+
+    def _receive_work_result(self):
+        if self.resp_sock.closed:
+            raise BreakError()
+
+        msg = None
+        while msg is None:
+            try:
+                msg = self.resp_sock.recv(zmq.NOBLOCK)
+            except zmq.ZMQError, e:
+                if e.errno == zmq.EAGAIN:
+                    if self._do_stop:
+                        break
+                    else:
+                        time.sleep(0.1)
+                else:
+                    raise
+
+        return msg
 
 def run_test_dispatcher(work_count, num_workers=1):
     # Set up temporary directories to save data

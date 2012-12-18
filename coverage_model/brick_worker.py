@@ -140,8 +140,7 @@ class ZmqBrickWriterWorker(BaseBrickWriterWorker):
     def _send_result(self, msg):
         self.resp_sock.send(msg)
 
-
-def run_worker(req_port, resp_port):
+def run_zmq_worker(req_port, resp_port):
     worker = ZmqBrickWriterWorker(req_port, resp_port)
     worker.start()
     return worker
