@@ -489,6 +489,9 @@ def run_test_dispatcher(work_count, num_workers=1):
     import tempfile
     BASE_DIR = tempfile.mkdtemp()
 
+    if not os.path.exists(BASE_DIR):
+        os.makedirs(BASE_DIR)
+
     WORK_KEYS = ['a','b','c','d','e']
 
     for x in [x for x in os.listdir(BASE_DIR) if x.endswith('.h5')]:
@@ -504,7 +507,7 @@ def run_test_dispatcher(work_count, num_workers=1):
     cD = (5,)
     fv = -9999
     dtype = 'f'
-    
+
     def fcb(message, work):
         log.error('WORK DISCARDED!!!; %s: %s', message, work)
 
