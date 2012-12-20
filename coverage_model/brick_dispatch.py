@@ -485,9 +485,9 @@ class BrickWriterDispatcher(QueueBrickWriterDispatcher):
 
 def run_test_dispatcher(work_count, num_workers=1):
     # Set up temporary directories to save data
-    import shutil
     import tempfile
     BASE_DIR = tempfile.mkdtemp()
+    log.info('Output Directory: %s', BASE_DIR)
 
     if not os.path.exists(BASE_DIR):
         os.makedirs(BASE_DIR)
@@ -530,9 +530,6 @@ def run_test_dispatcher(work_count, num_workers=1):
             time.sleep(0.1)
 
     spawn(make_work)
-
-    # Remove temporary directories
-    shutil.rmtree(BASE_DIR)
 
     return disp
 
