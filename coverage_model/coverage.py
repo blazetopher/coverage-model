@@ -39,8 +39,8 @@ from pyon.util.async import spawn
 from coverage_model.basic_types import AbstractIdentifiable, AxisTypeEnum, MutabilityEnum, VariabilityEnum, get_valid_DomainOfApplication, Dictable, InMemoryStorage
 from coverage_model.parameter import Parameter, ParameterDictionary, ParameterContext
 from coverage_model.parameter_values import get_value_class, AbstractParameterValue
-from coverage_model.persistence import PersistenceLayer, InMemoryPersistenceLayer
-from coverage_model import utils
+from coverage_model.persistence import PersistenceLayer, InMemoryPersistenceLayer, ViewPersistenceLayer
+import coverage_model.utils as utils
 from copy import deepcopy
 import numpy as np
 import os, collections, pickle
@@ -186,7 +186,7 @@ class ViewCoverage(AbstractCoverage):
     """
     References 1 AbstractCoverage and applies a Filter
     """
-    def __init__(self, root_dir, persistence_guid, reference_coverage, name=None, parameter_dictionary=None, mode='r'):
+    def __init__(self, root_dir, persistence_guid, reference_coverage_location=None, name=None, parameter_dictionary=None, mode=None):
         AbstractCoverage.__init__(self, mode=mode)
 
         try:
@@ -203,16 +203,22 @@ class ViewCoverage(AbstractCoverage):
                 if not os.path.exists(pth):
                     raise SystemError('Cannot find specified coverage: {0}'.format(pth))
 
-                pass
+                self._persistence_layer = ViewPersistenceLayer(root_dir, persistence_guid, mode=self.mode)
 
-            if name is None or parameter_dictionary is None:
+                self.name = self._persistence_layer.name
+
+                self.reference_coverage = AbstractCoverage.load(self._persistence_layer.rcov_loc, mode='r')
+                self.parameter_filter = ParameterFilter(view_parameter_dictionary=self._persistence_layer.param_dict, reference_parameter_dictionary=self.reference_coverage.parameter_dictionary)
+                self.structure_filter = StructureFilter()
+
+            if reference_coverage_location is None or name is None or parameter_dictionary is None:
                 # This appears to be a load
                 _doload(self)
             else:
                 # This appears to be a new coverage
                 # Make sure name and parameter_dictionary are not None
-                if name is None or parameter_dictionary is None:
-                    raise SystemError('\'name\' and \'parameter_dictionary\' cannot be None')
+                if reference_coverage_location is None or name is None or parameter_dictionary is None:
+                    raise SystemError('\'reference_coverage_location\', \'name\' and \'parameter_dictionary\' cannot be None')
 
                 # If the coverage directory exists, load it instead!!
                 if os.path.exists(pth):
@@ -220,16 +226,21 @@ class ViewCoverage(AbstractCoverage):
                     _doload(self)
                     return
 
-                if not isinstance(reference_coverage, str):
-                    raise TypeError('\'reference_coverage\' must be of type str')
+                if not isinstance(reference_coverage_location, str):
+                    raise TypeError('\'reference_coverage_location\' must be of type str')
 
-                if not os.path.exists(reference_coverage):
-                    raise IOError('Cannot locate reference_coverage \'{0}\''.format(reference_coverage))
+                if not os.path.exists(reference_coverage_location):
+                    raise IOError('\'reference_coverage_location\' cannot be found: \'{0}\''.format(reference_coverage_location))
 
-                self.reference_coverage = AbstractCoverage.load(reference_coverage, mode='r')
+                self.name = name
+
+                # Open the reference coverage - ALWAYS in read-only mode
+                self.reference_coverage = AbstractCoverage.load(reference_coverage_location, mode='r')
 
                 self.parameter_filter = ParameterFilter(view_parameter_dictionary=parameter_dictionary, reference_parameter_dictionary=self.reference_coverage.parameter_dictionary)
                 self.structure_filter = StructureFilter()
+
+                self._persistence_layer = ViewPersistenceLayer(root_dir, persistence_guid, rcov_loc=reference_coverage_location, name=self.name, param_dict=self.parameter_filter.pdict, sfilter=self.structure_filter, mode=self.mode)
 
         except:
             self._closed = True

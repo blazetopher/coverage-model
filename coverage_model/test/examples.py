@@ -189,7 +189,58 @@ def sampleviewcov():
 
     cov = ViewCoverage('test_data',
         'test_view',
-        reference_coverage=ref_cov,
+        reference_coverage_location=ref_cov,
+        name='test ViewCoverage',
+        parameter_dictionary=pdict)
+
+    return cov
+
+def ptypesviewcov():
+    cov=ptypescov()
+    ref_cov = cov.persistence_dir
+    cov.close()
+
+    # Instantiate a ParameterDictionary
+    pdict = ParameterDictionary()
+
+    # Create a set of ParameterContext objects to define the parameters in the coverage, add each to the ParameterDictionary
+    quant_t_ctxt = ParameterContext('quantity_time', param_type=QuantityType(value_encoding=np.dtype('int64')), variability=VariabilityEnum.TEMPORAL)
+    quant_t_ctxt.axis = AxisTypeEnum.TIME
+    quant_t_ctxt.uom = 'seconds since 01-01-1970'
+    pdict.add_context(quant_t_ctxt)
+
+    cnst_int_ctxt = ParameterContext('const_int', param_type=ConstantType(QuantityType(value_encoding=np.dtype('int32'))), variability=VariabilityEnum.NONE)
+    cnst_int_ctxt.long_name = 'example of a parameter of type ConstantType, base_type int32'
+    cnst_int_ctxt.axis = AxisTypeEnum.LAT
+    cnst_int_ctxt.uom = 'degree_north'
+    pdict.add_context(cnst_int_ctxt)
+
+#    cnst_flt_ctxt = ParameterContext('const_float', param_type=ConstantType(), variability=VariabilityEnum.NONE)
+#    cnst_flt_ctxt.long_name = 'example of a parameter of type QuantityType, base_type float (default)'
+#    cnst_flt_ctxt.axis = AxisTypeEnum.LON
+#    cnst_flt_ctxt.uom = 'degree_east'
+#    pdict.add_context(cnst_flt_ctxt)
+
+    cat = {0:'turkey',1:'duck',2:'chicken',99:'None'}
+    cat_ctxt = ParameterContext('category', param_type=CategoryType(categories=cat), variability=VariabilityEnum.TEMPORAL)
+    pdict.add_context(cat_ctxt)
+
+#    quant_ctxt = ParameterContext('quantity', param_type=QuantityType(value_encoding=np.dtype('float32')))
+#    quant_ctxt.long_name = 'example of a parameter of type QuantityType'
+#    quant_ctxt.uom = 'degree_Celsius'
+#    pdict.add_context(quant_ctxt)
+
+    arr_ctxt = ParameterContext('array', param_type=ArrayType())
+    arr_ctxt.long_name = 'example of a parameter of type ArrayType, will be filled with variable-length \'byte-string\' data'
+    pdict.add_context(arr_ctxt)
+
+#    rec_ctxt = ParameterContext('record', param_type=RecordType())
+#    rec_ctxt.long_name = 'example of a parameter of type RecordType, will be filled with dictionaries'
+#    pdict.add_context(rec_ctxt)
+
+    cov = ViewCoverage('test_data',
+        'test_view',
+        reference_coverage_location=ref_cov,
         name='test ViewCoverage',
         parameter_dictionary=pdict)
 
