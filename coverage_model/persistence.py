@@ -35,7 +35,7 @@ class ViewPersistenceLayer(object):
 
         self.mode = mode
 
-        if self.master_manager.is_dirty():
+        if self.mode != 'r':
             self.master_manager.flush()
 
         self._closed = False

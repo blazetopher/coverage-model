@@ -232,6 +232,14 @@ class ViewCoverage(AbstractCoverage):
                 if not os.path.exists(reference_coverage_location):
                     raise IOError('\'reference_coverage_location\' cannot be found: \'{0}\''.format(reference_coverage_location))
 
+                # We've checked everything we can - this is a new coverage!!!
+
+                # Check the mode - must be in 'a' for a new coverage
+                if self.mode != 'a':
+                    self.mode = 'a'
+
+                if not isinstance(name, basestring):
+                    raise TypeError('\'name\' must be of type basestring')
                 self.name = name
 
                 # Open the reference coverage - ALWAYS in read-only mode
