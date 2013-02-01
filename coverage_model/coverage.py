@@ -1033,6 +1033,25 @@ class DomainSet(AbstractIdentifiable):
 
         return tuple(ret)
 
+    def __add__(self, other):
+        if not isinstance(other, type(self)):
+            raise TypeError('\'other\' must be of same type as self: type(other) == {0}'.format(type(other)))
+
+        slen = len(self.sdom)
+        olen = len(other.sdom)
+        if slen != olen:
+            raise ValueError('Length of other.sdom must match length of self.sdom: self.shape == {0}, other.shape == {1}'.format(slen, olen))
+
+        ntdom=self.tdom + other.tdom
+        nsdom = []
+        for x in xrange(slen):
+            if self.sdom[x] != other.sdom[x]:
+                raise ValueError('Dimension of {0} of sdom is not the same between self & other: self.sdom[{0}] == {1}, self.sdom[{0}] == {2}'.format(x, self.sdom[x], other.sdom[x]))
+            else:
+                nsdom.append(self.sdom[x])
+
+        return DomainSet(ntdom, tuple(nsdom))
+
 class SimpleDomainSet(AbstractIdentifiable):
     def __init__(self, shape, **kwargs):
         kwc=kwargs.copy()
@@ -1042,6 +1061,24 @@ class SimpleDomainSet(AbstractIdentifiable):
     @property
     def total_extents(self):
         return self.shape
+
+    def __add__(self, other):
+        if not isinstance(other, type(self)):
+            raise TypeError('\'other\' must be of same type as self: type(other) == {0}'.format(type(other)))
+
+        slen = len(self.shape)
+        olen = len(other.shape)
+        if slen != olen:
+            raise ValueError('Length of other.shape must match length of self.shape: self.shape == {0}, other.shape == {1}'.format(slen, olen))
+
+        nshp = [self.shape[0] + other.shape[0]]
+        for x in range(slen)[1:]:
+            if self.shape[x] != other.shape[x]:
+                raise ValueError('Inner dimension of shape {0} is not the same between self & other: self.shape[{0}] == {1}, self.shape[{0}] == {2}'.format(x, self.shape[x], other.shape[x]))
+            else:
+                nshp.append(self.shape[x])
+
+        return SimpleDomainSet(tuple(nshp))
 
 #=========================
 # Shape Objects

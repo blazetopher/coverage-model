@@ -53,6 +53,18 @@ class AbstractParameterValue(AbstractBase):
     def value_encoding(self):
         return self.parameter_type.value_encoding
 
+    def combine(self, other):
+        if not isinstance(other, type(self)):
+            raise TypeError('\'other\' must be of same type as self: type(other) == {0}'.format(type(other)))
+
+        ret = get_value_class(self.parameter_type, self.domain_set + other.domain_set)
+        self_c = self.content
+        lsc = len(self_c)
+        ret._storage[:lsc] = self_c
+        ret._storage[lsc:] = other.content
+
+        return ret
+
     def expand_content(self, domain, origin, expansion):
         if domain == VariabilityEnum.TEMPORAL: # Temporal
             self._storage.expand(self.shape[1:], origin, expansion)
@@ -196,6 +208,19 @@ class ConstantValue(AbstractComplexParameterValue):
         # No op storage is always 1 - appropriate domain applied during retrieval of data
         pass
 
+    def combine(self, other):
+        if not isinstance(other, type(self)):
+            raise TypeError('\'other\' must be of same type as self: type(other) == {0}'.format(type(other)))
+
+        scont = self.content
+        if scont != other.content:
+            raise ValueError('Cannot combine ConstantValues with differing content: self.content == {0}, other.content == {1}'.format(scont, other.content))
+
+        ret = get_value_class(self.parameter_type, self.domain_set + other.domain_set)
+        ret._storage[0] = scont
+
+        return ret
+
     def __getitem__(self, slice_):
         slice_ = utils.fix_slice(slice_, self.shape)
 
@@ -251,6 +276,19 @@ class ConstantRangeValue(AbstractComplexParameterValue):
     def expand_content(self, domain, origin, expansion):
         # No op storage is always 1 - appropriate domain applied during retrieval of data
         pass
+
+    def combine(self, other):
+        if not isinstance(other, type(self)):
+            raise TypeError('\'other\' must be of same type as self: type(other) == {0}'.format(type(other)))
+
+        scont = self.content
+        if scont != other.content:
+            raise ValueError('Cannot combine ConstantRangeValues with differing content: self.content == {0}, other.content == {1}'.format(scont, other.content))
+
+        ret = get_value_class(self.parameter_type, self.domain_set + other.domain_set)
+        ret._storage[0] = scont
+
+        return ret
 
     def __getitem__(self, slice_):
         slice_ = utils.fix_slice(slice_, self.shape)
