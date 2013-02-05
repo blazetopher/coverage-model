@@ -6,6 +6,7 @@
 @author Christopher Mueller
 @brief Helper functions and classes for the PersistenceLayer
 """
+from coverage_model.threads import AsyncDispatcher
 
 from pyon.core.interceptor.encode import encode_ion, decode_ion
 from ooi.logging import log
@@ -37,7 +38,10 @@ class BaseManager(object):
             os.makedirs(self.root_dir)
 
         if os.path.exists(self.file_path):
-            self._load()
+            # This will run the HDF operation in a separate posix thread,
+            # thereby allowing other greenlets to perform work while hdf works
+            with AsyncDispatcher(self._load) as disp:
+                disp.wait(10) # Wait a max of 10 seconds
 
         for k, v in kwargs.iteritems():
             # Don't overwrite with None
@@ -47,6 +51,12 @@ class BaseManager(object):
             setattr(self, k, v)
 
     def flush(self):
+        # This will run the HDF operation in a separate posix thread,
+        # thereby allowing other greenlets to perform work while hdf works
+        with AsyncDispatcher(self._flush) as disp:
+            disp.wait(10) # Wait a max of 10 seconds
+
+    def _flush(self):
         if self.is_dirty(True):
             with h5py.File(self.file_path, 'a') as f:
                 for k in list(self._dirty):
@@ -134,10 +144,18 @@ class MasterManager(BaseManager):
             f.visit(self.param_groups.add)
 
     def add_external_link(self, link_path, rel_ext_path, link_name):
+        with AsyncDispatcher(self._add_external_link, link_path, rel_ext_path, link_name) as disp:
+            disp.wait(10)
+
+    def _add_external_link(self, link_path, rel_ext_path, link_name):
         with h5py.File(self.file_path, 'r+') as f:
             f[link_path] = h5py.ExternalLink(rel_ext_path, link_name)
 
     def create_group(self, group_path):
+        with AsyncDispatcher(self._create_group, group_path) as disp:
+            disp.wait(10)
+
+    def _create_group(self, group_path):
         with h5py.File(self.file_path, 'r+') as f:
             f.create_group(group_path)
 
@@ -155,6 +173,12 @@ class ParameterManager(BaseManager):
         pass
 
     def update_rtree(self, count, extents, obj):
+        # This will run the HDF operation in a separate posix thread,
+        # thereby allowing other greenlets to perform work while hdf works
+        with AsyncDispatcher(self._update_rtree, count, extents, obj) as disp:
+            disp.wait(10) # Wait a max of 10 seconds
+
+    def _update_rtree(self, count, extents, obj):
         if not hasattr(self, 'brick_tree'):
             raise AttributeError('Cannot update rtree; object does not have a \'brick_tree\' attribute!!')
 

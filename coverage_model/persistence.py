@@ -8,6 +8,7 @@
 """
 
 from coverage_model.brick_dispatch import BrickWriterDispatcher
+from coverage_model.threads import AsyncDispatcher
 from ooi.logging import log
 from coverage_model.basic_types import create_guid, AbstractStorage, InMemoryStorage
 from coverage_model.parameter_types import FunctionType, ConstantType
@@ -626,8 +627,15 @@ class PersistedStorage(AbstractStorage):
             else:
                 log.trace('Found real brick file: %s', brick_file_path)
 
-                with h5py.File(brick_file_path) as brick_file:
-                    v = brick_file[brick_guid].__getitem__(*brick_slice)
+                def read_hdf(brick_file_path, brick_guid, brick_slice):
+                    with h5py.File(brick_file_path) as brick_file:
+                        v = brick_file[brick_guid].__getitem__(*brick_slice)
+                    return v
+
+                # This will run the HDF operation in a separate posix thread,
+                # thereby allowing other greenlets to perform work while hdf writes
+                with AsyncDispatcher(read_hdf, brick_file_path, brick_guid, brick_slice) as disp:
+                    v = disp.wait(10) # Wait a max of 10 seconds
 
                 # Check if object type
                 if self.dtype == '|O8':
@@ -713,13 +721,19 @@ class PersistedStorage(AbstractStorage):
                     data_type = h5py.special_dtype(vlen=str)
                 if 0 in cD or 1 in cD:
                     cD = True
-                with h5py.File(brick_file_path, 'a') as f:
-                    # TODO: Due to usage concerns, currently locking chunking to "auto"
-                    f.require_dataset(brick_guid, shape=bD, dtype=data_type, chunks=None, fillvalue=fv)
-                    if isinstance(brick_slice, tuple):
-                        brick_slice = list(brick_slice)
+                def write_vals(brick_file_path, brick_guid, bD, data_type, fv, brick_slice, v):
+                    with h5py.File(brick_file_path, 'a') as f:
+                        # TODO: Due to usage concerns, currently locking chunking to "None"
+                        f.require_dataset(brick_guid, shape=bD, dtype=data_type, chunks=None, fillvalue=fv)
+                        if isinstance(brick_slice, tuple):
+                            brick_slice = list(brick_slice)
 
-                    f[brick_guid].__setitem__(*brick_slice, val=v)
+                        f[brick_guid].__setitem__(*brick_slice, val=v)
+
+                # This will run the HDF operation in a separate posix thread,
+                # thereby allowing other greenlets to perform work while hdf writes
+                with AsyncDispatcher(write_vals, brick_file_path, brick_guid, bD, data_type, fv, brick_slice, v) as disp:
+                    disp.wait(10) # Wait a max of 10 seconds
             else:
                 # If the brick file doesn't exist, 'touch' it to make sure it's immediately available
                 if not os.path.exists(brick_file_path):
@@ -727,9 +741,16 @@ class PersistedStorage(AbstractStorage):
                         data_type = h5py.special_dtype(vlen=str)
                     if 0 in cD or 1 in cD:
                         cD = True
-                    with h5py.File(brick_file_path, 'a') as f:
-                        # TODO: Due to usage concerns, currently locking chunking to "auto"
-                        f.require_dataset(brick_guid, shape=bD, dtype=data_type, chunks=None, fillvalue=fv)
+
+                    def touch_dataset(brick_file_path, brick_guid, bD, data_type, fv):
+                        with h5py.File(brick_file_path, 'a') as f:
+                            # TODO: Due to usage concerns, currently locking chunking to "auto"
+                            f.require_dataset(brick_guid, shape=bD, dtype=data_type, chunks=None, fillvalue=fv)
+
+                    # This will run the HDF operation in a separate posix thread,
+                    # thereby allowing other greenlets to perform work while hdf writes
+                    with AsyncDispatcher(touch_dataset, brick_file_path, brick_guid, bD, data_type, fv) as disp:
+                        disp.wait(10) # Wait a max of 10 seconds
 
                 if self.auto_flush:
                     # Immediately submit work to the dispatcher
