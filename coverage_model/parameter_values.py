@@ -268,9 +268,15 @@ class ConstantRangeValue(AbstractComplexParameterValue):
 
     def __setitem__(self, slice_, value):
         if self.parameter_type.is_valid_value(value):
-            # We already know it's either a list or tuple, that it's length is >= 2, and that both of
+            # We already know it's either a list, tuple, or numpy array,
+            # and that the appropriate item is length is >= 2, and that both of
             # the first two values are of the correct type...so...
-            self._storage[0] = str(tuple(value[:2]))
+            if isinstance(value, (list, tuple)):
+                self._storage[0] = str(tuple(value[:2]))
+            elif isinstance(value, np.ndarray):
+                self._storage[0] = str(tuple(value[0][:2]))
+            elif value is None:
+                self._storage[0] = None
 
 class CategoryValue(AbstractComplexParameterValue):
 

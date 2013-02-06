@@ -536,6 +536,15 @@ class ConstantRangeType(AbstractComplexParameterType):
             for v in value[:2]:
                 if np.asanyarray(v).dtype.kind != my_kind:
                     raise ValueError('\'value\' must be a list or tuple of size >= 2 and kind={0}; value={1}'.format(my_kind, value))
+        elif isinstance(value, np.ndarray) and len(value) >= 1 and isinstance(value[0], (list,tuple)) and len(value[0]) >= 2:
+            my_kind=np.dtype(self.value_encoding).kind
+            for v in value[0][:2]:
+                if np.asanyarray(v).dtype.kind != my_kind:
+                    raise ValueError('\'value\' must be a list or tuple of size >= 2 and kind={0}; value={1}'.format(my_kind, value))
+        elif value is None:
+            pass
+        else:
+            raise ValueError('\'value\' must be either a list, tuple, or numpy array containing a list or tuple as it\'s first element')
 
         return True
 
