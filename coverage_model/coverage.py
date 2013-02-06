@@ -91,7 +91,7 @@ class AbstractCoverage(AbstractIdentifiable):
         return obj
 
     @classmethod
-    def load(cls, root_dir, persistence_guid=None, mode=None):
+    def load(cls, root_dir, persistence_guid=None, reference_coverage_location=None, parameter_dictionary=None, mode=None):
         if not isinstance(root_dir, basestring):
             raise ValueError('\'root_dir\' must be a string')
 
@@ -182,7 +182,7 @@ class AbstractCoverage(AbstractIdentifiable):
         self.close()
 
 class ViewCoverage(AbstractCoverage):
-    # TODO: Implement
+    # TODO: Implement ViewCoverage
     """
     References 1 AbstractCoverage and applies a Filter
     """
@@ -272,38 +272,56 @@ class ViewCoverage(AbstractCoverage):
         raise TypeError('Cannot set values against a ViewCoverage')
 
     def get_time_values(self, tdoa=None, return_value=None):
-        pass
+        return self.reference_coverage.get_time_values(tdoa=tdoa, return_value=return_value)
 
     @property
     def num_timesteps(self):
-        pass
+        return self.reference_coverage.num_timesteps
+
+    @property
+    def persistence_guid(self):
+        if isinstance(self._persistence_layer, InMemoryPersistenceLayer):
+            return None
+        else:
+            return self._persistence_layer.guid
+
+    @property
+    def persistence_dir(self):
+        if isinstance(self._persistence_layer, InMemoryPersistenceLayer):
+            return None
+        else:
+            return self._persistence_layer.master_manager.root_dir
 
     def set_parameter_values(self, param_name, value, tdoa=None, sdoa=None):
         raise TypeError('Cannot set values against a ViewCoverage')
 
     def get_parameter_values(self, param_name, tdoa=None, sdoa=None, return_value=None):
-        pass
+        return self.reference_coverage.get_parameter_values(param_name, tdoa=tdoa, sdoa=sdoa, return_value=return_value)
 
     def get_parameter_context(self, param_name):
-        pass
+        return self.reference_coverage.get_parameter_context(param_name)
 
     def get_data_bounds(self, parameter_name=None):
-        pass
+        return self.reference_coverage.get_data_bounds(parameter_name=parameter_name)
 
     def get_data_bounds_by_axis(self, axis=None):
-        pass
+        return self.reference_coverage.get_data_bounds_by_axis(axis=axis)
 
     def get_data_extents(self, parameter_name=None):
-        pass
+        return self.reference_coverage.get_data_extents(parameter_name=parameter_name)
 
     def get_data_extents_by_axis(self, axis=None):
-        pass
+        return self.reference_coverage.get_data_extents_by_axis(axis=axis)
 
     def get_data_size(self, parameter_name=None, slice_=None, in_bytes=False):
-        pass
+        return self.reference_coverage.get_data_size(parameter_name=parameter_name, slice_=slice_, in_bytes=in_bytes)
 
+    def refresh(self):
+        self.close()
 
-
+        self.__init__(os.path.split(self.persistence_dir)[0],
+            self.persistence_guid,
+            reference_coverage_location=self.reference_coverage.persistence_dir)
 
 class ComplexCoverage(AbstractCoverage):
     # TODO: Implement
