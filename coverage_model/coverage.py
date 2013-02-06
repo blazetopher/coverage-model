@@ -258,8 +258,14 @@ class ViewCoverage(AbstractCoverage):
     def parameter_dictionary(self):
         return deepcopy(self.parameter_filter.pdict)
 
+    def _parameter_name_arg_to_params(self, parameter_name=None, parameter_dictionary=None):
+        return self.reference_coverage._parameter_name_arg_to_params(parameter_name, self.parameter_dictionary)
+
     def get_parameter(self, param_name):
-        pass
+        if param_name in self.parameter_dictionary.keys():
+            return self.reference_coverage.get_parameter(param_name)
+        else:
+            raise ValueError('The parameter name \'{0}\' is not available in the View Coverage'.format(param_name))
 
     def list_parameters(self, coords_only=False, data_only=False):
         ref_params = self.reference_coverage.list_parameters(coords_only, data_only)
@@ -299,22 +305,25 @@ class ViewCoverage(AbstractCoverage):
         return self.reference_coverage.get_parameter_values(param_name, tdoa=tdoa, sdoa=sdoa, return_value=return_value)
 
     def get_parameter_context(self, param_name):
-        return self.reference_coverage.get_parameter_context(param_name)
+        return self.reference_coverage.get_parameter_context(param_name=param_name)
 
     def get_data_bounds(self, parameter_name=None):
-        return self.reference_coverage.get_data_bounds(parameter_name=parameter_name)
+        params = self._parameter_name_arg_to_params(parameter_name, self.parameter_dictionary)
+        return self.reference_coverage.get_data_bounds(parameter_name=params)
 
     def get_data_bounds_by_axis(self, axis=None):
         return self.reference_coverage.get_data_bounds_by_axis(axis=axis)
 
     def get_data_extents(self, parameter_name=None):
-        return self.reference_coverage.get_data_extents(parameter_name=parameter_name)
+        params = self._parameter_name_arg_to_params(parameter_name, self.parameter_dictionary)
+        return self.reference_coverage.get_data_extents(parameter_name=params)
 
     def get_data_extents_by_axis(self, axis=None):
         return self.reference_coverage.get_data_extents_by_axis(axis=axis)
 
     def get_data_size(self, parameter_name=None, slice_=None, in_bytes=False):
-        return self.reference_coverage.get_data_size(parameter_name=parameter_name, slice_=slice_, in_bytes=in_bytes)
+        params = self._parameter_name_arg_to_params(parameter_name, self.parameter_dictionary)
+        return self.reference_coverage.get_data_size(parameter_name=params, slice_=slice_, in_bytes=in_bytes)
 
     def refresh(self):
         self.close()
@@ -322,6 +331,12 @@ class ViewCoverage(AbstractCoverage):
         self.__init__(os.path.split(self.persistence_dir)[0],
             self.persistence_guid,
             reference_coverage_location=self.reference_coverage.persistence_dir)
+
+    def pickle_load(self, file_path):
+        raise TypeError('Cannot load a ViewCoverage using pickle')
+
+    def pickle_save(self, cov_obj, file_path, use_ascii=False):
+        raise TypeError('Cannot save a ViewCoverage using pickle')
 
 class ComplexCoverage(AbstractCoverage):
     # TODO: Implement
@@ -802,7 +817,7 @@ class SimplexCoverage(AbstractCoverage):
 
         return deepcopy(self._range_dictionary.get_context(param_name))
 
-    def __axis_arg_to_params(self, axis=None):
+    def _axis_arg_to_params(self, axis=None):
         """
         Helper function to compose a list of parameter names based on the <i>axis</i> argument
 
@@ -831,21 +846,35 @@ class SimplexCoverage(AbstractCoverage):
 
         return params
 
-    def __parameter_name_arg_to_params(self, parameter_name=None):
+    def _parameter_name_arg_to_params(self, parameter_name=None, pdict=None):
         """
         Helper function to compose a list of parameter names based on the <i>parameter_name</i> argument
 
         If <i>parameter_name</i> is None, all parameters in the coverage are included
+        The <i>pdict</i> argument is used to check for validity of <i>parameter_name</i>
 
         @param parameter_name A string parameter name; may be an iterable of such members
+        @pdict  A ParameterDictionary
         """
+        if pdict is None:
+            pdict = self._range_dictionary
         params = []
         if parameter_name is None:
-            params.extend(self._range_dictionary.keys())
+            params.extend(pdict.keys())
         elif hasattr(parameter_name, '__iter__'):
-            params.extend(pn for pn in parameter_name if pn in self._range_dictionary.keys())
+            params.extend(pn for pn in parameter_name)
         else:
             params.append(parameter_name)
+
+        # Verify
+        invalid_params = set(params).difference(set(pdict.keys()))
+        log.warn(invalid_params)
+
+        if None in invalid_params:
+            invalid_params = ''
+
+        if len(invalid_params) != 0:
+            raise ValueError('Coverage does not have parameters: \'{0}\''.format(invalid_params))
 
         return params
 
@@ -865,7 +894,7 @@ class SimplexCoverage(AbstractCoverage):
 
         from coverage_model import QuantityType, ConstantType
         ret = {}
-        for pn in self.__parameter_name_arg_to_params(parameter_name):
+        for pn in self._parameter_name_arg_to_params(parameter_name):
             if pn == self.temporal_parameter_name: # Make assumption that temporal is monotonically increasing!!
                 ret[pn] = (self._range_value[pn][0], self._range_value[pn][-1])
             else:
@@ -895,7 +924,7 @@ class SimplexCoverage(AbstractCoverage):
 
         @param axis   A member of AxisTypeEnum; may be an iterable of such members
         """
-        return self.get_data_bounds(self.__axis_arg_to_params(axis))
+        return self.get_data_bounds(self._axis_arg_to_params(axis))
 
     def get_data_extents(self, parameter_name=None):
         """
@@ -909,7 +938,7 @@ class SimplexCoverage(AbstractCoverage):
         @param parameter_name   A string parameter name; may be an iterable of such members
         """
         ret = {}
-        for pn in self.__parameter_name_arg_to_params(parameter_name):
+        for pn in self._parameter_name_arg_to_params(parameter_name):
             p = self._range_dictionary.get_context(pn)
             ret[pn] = p.dom.total_extents
 
@@ -929,7 +958,7 @@ class SimplexCoverage(AbstractCoverage):
 
         @param axis   A member of AxisTypeEnum; may be an iterable of such members
         """
-        return self.get_data_extents(self.__axis_arg_to_params(axis))
+        return self.get_data_extents(self._axis_arg_to_params(axis))
 
     def get_data_size(self, parameter_name=None, slice_=None, in_bytes=False):
         """
@@ -961,7 +990,7 @@ class SimplexCoverage(AbstractCoverage):
             for pn in self._range_dictionary.keys():
                 size += self.get_data_size(pn, in_bytes=in_bytes)
 
-        for pn in self.__parameter_name_arg_to_params(parameter_name):
+        for pn in self._parameter_name_arg_to_params(parameter_name):
             p = self._range_dictionary.get_context(pn)
             te=p.dom.total_extents
             dt = np.dtype(p.param_type.value_encoding)
