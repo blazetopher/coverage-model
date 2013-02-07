@@ -992,6 +992,7 @@ class TestCoverageModelBasicsInt(CoverageModelIntTestCase):
         # Instantiate the SimplexCoverage providing the ParameterDictionary, spatial Domain and temporal Domain
         #scov = SimplexCoverage(self.working_dir, create_guid(), 'sample coverage_model', parameter_dictionary=pdict, temporal_domain=tdom, spatial_domain=sdom, in_memory_storage=in_memory)
         scov = SimplexCoverage(self.working_dir, create_guid(), name='sample coverage_model', parameter_dictionary=pdict, temporal_domain=tdom, spatial_domain=sdom, mode=mode, in_memory_storage=in_memory, bricking_scheme=None, inline_data_writes=in_line, auto_flush_values=auto_flush)
+        scov.refresh()
         return scov
 
     def _make_oneparamcov(self, save_coverage=False, in_memory=False):
