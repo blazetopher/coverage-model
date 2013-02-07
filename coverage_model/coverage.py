@@ -111,6 +111,10 @@ class AbstractCoverage(AbstractIdentifiable):
 
         cov_obj.flush()
 
+    @classmethod
+    def refresh(cls):
+        cls.__init__(mode=cls.mode)
+
     def has_dirty_values(self):
         return self._persistence_layer.has_dirty_values()
 
@@ -330,7 +334,8 @@ class ViewCoverage(AbstractCoverage):
 
         self.__init__(os.path.split(self.persistence_dir)[0],
             self.persistence_guid,
-            reference_coverage_location=self.reference_coverage.persistence_dir)
+            reference_coverage_location=self.reference_coverage.persistence_dir,
+            mode=self.mode)
 
     def pickle_load(self, file_path):
         raise TypeError('Cannot load a ViewCoverage using pickle')
@@ -876,6 +881,9 @@ class SimplexCoverage(AbstractCoverage):
         if len(invalid_params) != 0:
             raise ValueError('Coverage does not have parameters: \'{0}\''.format(invalid_params))
 
+        if None in params:
+            params = ''
+
         return params
 
     def get_data_bounds(self, parameter_name=None):
@@ -910,7 +918,6 @@ class SimplexCoverage(AbstractCoverage):
 
         if len(ret) == 1:
             ret = ret.values()[0]
-
         return ret
 
     def get_data_bounds_by_axis(self, axis=None):
@@ -944,7 +951,6 @@ class SimplexCoverage(AbstractCoverage):
 
         if len(ret) == 1:
             ret = ret.values()[0]
-
         return ret
 
     def get_data_extents_by_axis(self, axis=None):
@@ -1006,6 +1012,11 @@ class SimplexCoverage(AbstractCoverage):
             size *= 9.53674e-7
 
         return size
+
+    def refresh(self):
+        if not self._in_memory_storage:
+            self.close()
+            self.__init__(os.path.split(self.persistence_dir)[0], self.persistence_guid, mode=self.mode)
 
     @property
     def info(self):
