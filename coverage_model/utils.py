@@ -231,6 +231,9 @@ def hash_any(value, hv=None):
         for k,v in value.iteritems():
             hv = hash_any(k, hv)
             hv = hash_any(v, hv)
+    elif isinstance(value, slice):
+        # Hash a tuple of the slice components
+        hv = hash((value.start, value.stop, value.step)) ^ hv
     elif isinstance(value, object):
     #            log.debug('is object:  value=%s  hv=%s', value, hv)
         hv = hash_any(value.__dict__, hv)
