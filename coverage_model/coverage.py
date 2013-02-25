@@ -55,9 +55,21 @@ class AbstractCoverage(AbstractIdentifiable):
     TemporalTopology
     SpatialTopology
     """
+
+    VALUE_CACHE_LIMIT = 30
+
     def __init__(self, mode=None):
         AbstractIdentifiable.__init__(self)
         self._closed = False
+        self._range_dictionary = ParameterDictionary()
+        self._range_value = RangeValues()
+        self.value_caching = False
+        self._value_cache = collections.OrderedDict()
+
+        self.temporal_domain = GridDomain(GridShape('temporal',[0]), CRS.standard_temporal(), MutabilityEnum.EXTENSIBLE)
+        self.spatial_domain = None
+
+        self._persistence_layer = InMemoryPersistenceLayer()
 
         if mode is not None and isinstance(mode, str) and mode[0] in ['r','w','a','r+']:
             self.mode = mode
@@ -113,386 +125,7 @@ class AbstractCoverage(AbstractIdentifiable):
 
     @classmethod
     def refresh(cls):
-        cls.__init__(mode=cls.mode)
-
-    def has_dirty_values(self):
-        return self._persistence_layer.has_dirty_values()
-
-    def get_dirty_values_async_result(self):
-        if self.mode == 'r':
-            log.warn('Coverage not open for writing: mode=%s', self.mode)
-            from gevent.event import AsyncResult
-            ret = AsyncResult()
-            ret.set(True)
-            return ret
-
-        return self._persistence_layer.get_dirty_values_async_result()
-
-    def flush_values(self):
-        if self.mode == 'r':
-            log.warn('Coverage not open for writing: mode=%s', self.mode)
-            return
-
-        return self._persistence_layer.flush_values()
-
-    def flush(self):
-        if self.mode == 'r':
-            log.warn('Coverage not open for writing: mode=%s', self.mode)
-            return
-
-        self._persistence_layer.flush()
-
-    def close(self, force=False, timeout=None):
-        if not hasattr(self, '_closed'):
-            # _closed is the first attribute added to the coverage object (in AbstractCoverage)
-            # If it's not there, a TypeError has likely occurred while instantiating the coverage
-            # nothing else exists and we can just return
-            return
-        if not self._closed:
-            log.info('Closing coverage \'%s\'', self.name if hasattr(self,'name') else 'unnamed')
-
-            if self.mode != 'r':
-                log.debug('Ensuring dirty values have been flushed...')
-                if not force:
-                    self.get_dirty_values_async_result().get(timeout=timeout)
-
-            # If the _persistence_layer attribute is present, call it's close function
-            if hasattr(self, '_persistence_layer'):
-                self._persistence_layer.close(force=force, timeout=timeout) # Calls flush() on the persistence layer
-
-            # Not much else to do here at this point....but can add other things down the road
-
-        self._closed = True
-
-    @property
-    def closed(self):
-        return self._closed
-
-    @classmethod
-    def copy(cls, cov_obj, *args):
-        raise NotImplementedError('Coverages cannot yet be copied. You can load multiple \'independent\' copies of the same coverage, but be sure to save them to different names.')
-#        if not isinstance(cov_obj, AbstractCoverage):
-#            raise StandardError('cov_obj must be an instance or subclass of AbstractCoverage: object is {0}'.format(type(cov_obj)))
-#
-#        # NTK:
-#        # Args need to have 1-n (ParameterContext, DomainOfApplication, DomainOfApplication,) tuples
-#        # Need to pull the parameter_dictionary, spatial_domain and temporal_domain from cov_obj (TODO: copies!!)
-#        # DOA's and PC's used to copy data - TODO: Need way of reshaping PC's?
-#        ccov = SimplexCoverage(name='', _range_dictionary=None, spatial_domain=None, temporal_domain=None)
-#
-#        return ccov
-
-    def __del__(self):
-        self.close()
-
-class ViewCoverage(AbstractCoverage):
-    # TODO: Implement ViewCoverage
-    """
-    References 1 AbstractCoverage and applies a Filter
-    """
-    def __init__(self, root_dir, persistence_guid, reference_coverage_location=None, name=None, parameter_dictionary=None, mode=None):
-        AbstractCoverage.__init__(self, mode=mode)
-
-        try:
-            # Make sure root_dir and persistence_guid are both not None and are strings
-            if not isinstance(root_dir, str) or not isinstance(persistence_guid, str):
-                raise TypeError('\'root_dir\' and \'persistence_guid\' must be instances of str')
-
-            root_dir = root_dir if not root_dir.endswith(persistence_guid) else os.path.split(root_dir)[0]
-
-            pth=os.path.join(root_dir, persistence_guid)
-
-            def _doload(self):
-                # Make sure the coverage directory exists
-                if not os.path.exists(pth):
-                    raise SystemError('Cannot find specified coverage: {0}'.format(pth))
-
-                self._persistence_layer = ViewPersistenceLayer(root_dir, persistence_guid, mode=self.mode)
-
-                self.name = self._persistence_layer.name
-
-                self.reference_coverage = AbstractCoverage.load(self._persistence_layer.rcov_loc, mode='r')
-                self.parameter_filter = ParameterFilter(view_parameter_dictionary=self._persistence_layer.param_dict, reference_parameter_dictionary=self.reference_coverage.parameter_dictionary)
-                self.structure_filter = StructureFilter()
-
-            if reference_coverage_location is None or name is None or parameter_dictionary is None:
-                # This appears to be a load
-                _doload(self)
-            else:
-                # This appears to be a new coverage
-                # Make sure name and parameter_dictionary are not None
-                if reference_coverage_location is None or name is None or parameter_dictionary is None:
-                    raise SystemError('\'reference_coverage_location\', \'name\' and \'parameter_dictionary\' cannot be None')
-
-                # If the coverage directory exists, load it instead!!
-                if os.path.exists(pth):
-                    log.warn('The specified coverage already exists - performing load of \'{0}\''.format(pth))
-                    _doload(self)
-                    return
-
-                if not isinstance(reference_coverage_location, str):
-                    raise TypeError('\'reference_coverage_location\' must be of type str')
-
-                if not os.path.exists(reference_coverage_location):
-                    raise IOError('\'reference_coverage_location\' cannot be found: \'{0}\''.format(reference_coverage_location))
-
-                # We've checked everything we can - this is a new coverage!!!
-
-                # Check the mode - must be in 'a' for a new coverage
-                if self.mode != 'a':
-                    self.mode = 'a'
-
-                if not isinstance(name, basestring):
-                    raise TypeError('\'name\' must be of type basestring')
-                self.name = name
-
-                # Open the reference coverage - ALWAYS in read-only mode
-                self.reference_coverage = AbstractCoverage.load(reference_coverage_location, mode='r')
-
-                self.parameter_filter = ParameterFilter(view_parameter_dictionary=parameter_dictionary, reference_parameter_dictionary=self.reference_coverage.parameter_dictionary)
-                self.structure_filter = StructureFilter()
-
-                self._persistence_layer = ViewPersistenceLayer(root_dir, persistence_guid, rcov_loc=reference_coverage_location, name=self.name, param_dict=self.parameter_filter.pdict, sfilter=self.structure_filter, mode=self.mode)
-
-        except:
-            self._closed = True
-            raise
-
-    @property
-    def parameter_dictionary(self):
-        return deepcopy(self.parameter_filter.pdict)
-
-    def _parameter_name_arg_to_params(self, parameter_name=None, parameter_dictionary=None):
-        return self.reference_coverage._parameter_name_arg_to_params(parameter_name, self.parameter_dictionary)
-
-    def get_parameter(self, param_name):
-        if param_name in self.parameter_dictionary.keys():
-            return self.reference_coverage.get_parameter(param_name)
-        else:
-            raise ValueError('The parameter name \'{0}\' is not available in the View Coverage'.format(param_name))
-
-    def list_parameters(self, coords_only=False, data_only=False):
-        ref_params = self.reference_coverage.list_parameters(coords_only, data_only)
-        return self.parameter_filter.list_parameters(ref_params)
-
-    def insert_timesteps(self, count, origin=None):
-        raise TypeError('Cannot insert timesteps into a ViewCoverage')
-
-    def set_time_values(self, value, tdoa=None):
-        raise TypeError('Cannot set values against a ViewCoverage')
-
-    def get_time_values(self, tdoa=None, return_value=None):
-        return self.reference_coverage.get_time_values(tdoa=tdoa, return_value=return_value)
-
-    @property
-    def num_timesteps(self):
-        return self.reference_coverage.num_timesteps
-
-    @property
-    def persistence_guid(self):
-        if isinstance(self._persistence_layer, InMemoryPersistenceLayer):
-            return None
-        else:
-            return self._persistence_layer.guid
-
-    @property
-    def persistence_dir(self):
-        if isinstance(self._persistence_layer, InMemoryPersistenceLayer):
-            return None
-        else:
-            return self._persistence_layer.master_manager.root_dir
-
-    def set_parameter_values(self, param_name, value, tdoa=None, sdoa=None):
-        raise TypeError('Cannot set values against a ViewCoverage')
-
-    def get_parameter_values(self, param_name, tdoa=None, sdoa=None, return_value=None):
-        return self.reference_coverage.get_parameter_values(param_name, tdoa=tdoa, sdoa=sdoa, return_value=return_value)
-
-    def get_parameter_context(self, param_name):
-        return self.reference_coverage.get_parameter_context(param_name=param_name)
-
-    def get_data_bounds(self, parameter_name=None):
-        params = self._parameter_name_arg_to_params(parameter_name, self.parameter_dictionary)
-        return self.reference_coverage.get_data_bounds(parameter_name=params)
-
-    def get_data_bounds_by_axis(self, axis=None):
-        return self.reference_coverage.get_data_bounds_by_axis(axis=axis)
-
-    def get_data_extents(self, parameter_name=None):
-        params = self._parameter_name_arg_to_params(parameter_name, self.parameter_dictionary)
-        return self.reference_coverage.get_data_extents(parameter_name=params)
-
-    def get_data_extents_by_axis(self, axis=None):
-        return self.reference_coverage.get_data_extents_by_axis(axis=axis)
-
-    def get_data_size(self, parameter_name=None, slice_=None, in_bytes=False):
-        params = self._parameter_name_arg_to_params(parameter_name, self.parameter_dictionary)
-        return self.reference_coverage.get_data_size(parameter_name=params, slice_=slice_, in_bytes=in_bytes)
-
-    def refresh(self):
-        self.close()
-
-        self.__init__(os.path.split(self.persistence_dir)[0],
-            self.persistence_guid,
-            reference_coverage_location=self.reference_coverage.persistence_dir,
-            mode=self.mode)
-
-    def pickle_load(self, file_path):
-        raise TypeError('Cannot load a ViewCoverage using pickle')
-
-    def pickle_save(self, cov_obj, file_path, use_ascii=False):
-        raise TypeError('Cannot save a ViewCoverage using pickle')
-
-class ComplexCoverage(AbstractCoverage):
-    # TODO: Implement
-    """
-    References 1-n coverages
-    """
-    def __init__(self):
-        AbstractCoverage.__init__(self)
-        self.coverages = []
-
-class SimplexCoverage(AbstractCoverage):
-    """
-    A concrete implementation of AbstractCoverage consisting of 2 domains (temporal and spatial)
-    and a collection of parameters associated with one or both of the domains.  Each parameter is defined by a
-    ParameterContext object (provided via the ParameterDictionary) and has content represented by a concrete implementation
-    of the AbstractParameterValue class.
-
-    """
-
-    VALUE_CACHE_LIMIT = 30
-
-    def __init__(self, root_dir, persistence_guid, name=None, parameter_dictionary=None, temporal_domain=None, spatial_domain=None, mode=None, in_memory_storage=False, bricking_scheme=None, inline_data_writes=True, auto_flush_values=True, value_caching=True):
-        """
-        Constructor for SimplexCoverage
-
-        @param root_dir The root directory for storage of this coverage
-        @param persistence_guid The persistence uuid for this coverage
-        @param name The name of the coverage
-        @param parameter_dictionary    a ParameterDictionary object expected to contain one or more valid ParameterContext objects
-        @param spatial_domain  a concrete instance of AbstractDomain for the spatial domain component
-        @param temporal_domain a concrete instance of AbstractDomain for the temporal domain component
-        @param mode the file mode for the coverage; one of 'r', 'a', 'r+', or 'w'; defaults to 'r'
-        @param in_memory_storage    if False (default), HDF5 persistence is used; otherwise, nothing is written to disk and all data is held in memory only
-        @param bricking_scheme  the bricking scheme for the coverage; a dict of the form {'brick_size': #, 'chunk_size': #}
-        @param inline_data_writes   if True (default), brick data is written as it is set; otherwise it is written out-of-band by worker processes or threads
-        @param auto_flush_values    if True (default), brick data is flushed immediately; otherwise it is buffered until SimplexCoverage.flush_values() is called
-        @param value_caching  if True (default), up to 30 value requests are cached for rapid duplicate retrieval
-        """
-        AbstractCoverage.__init__(self, mode=mode)
-        try:
-            # Make sure root_dir and persistence_guid are both not None and are strings
-            if not isinstance(root_dir, str) or not isinstance(persistence_guid, str):
-                raise TypeError('\'root_dir\' and \'persistence_guid\' must be instances of str')
-
-            root_dir = root_dir if not root_dir.endswith(persistence_guid) else os.path.split(root_dir)[0]
-
-            pth=os.path.join(root_dir, persistence_guid)
-
-            def _doload(self):
-                # Make sure the coverage directory exists
-                if not os.path.exists(pth):
-                    raise SystemError('Cannot find specified coverage: {0}'.format(pth))
-
-                # All appears well - load it up!
-                self._persistence_layer = PersistenceLayer(root_dir, persistence_guid, mode=self.mode)
-
-                self.name = self._persistence_layer.name
-                self.spatial_domain = self._persistence_layer.sdom
-                self.temporal_domain = self._persistence_layer.tdom
-
-                self._range_dictionary = ParameterDictionary()
-                self._range_value = RangeValues()
-
-                self._bricking_scheme = self._persistence_layer.global_bricking_scheme
-
-                self._in_memory_storage = False
-
-                auto_flush_values = self._persistence_layer.auto_flush_values
-                inline_data_writes = self._persistence_layer.inline_data_writes
-                self.value_caching = self._persistence_layer.value_caching
-                if self.value_caching:
-                    self._value_cache = collections.OrderedDict()
-
-                from coverage_model.persistence import PersistedStorage
-                for parameter_name in self._persistence_layer.parameter_metadata.keys():
-                    md = self._persistence_layer.parameter_metadata[parameter_name]
-                    pc = md.parameter_context
-                    if hasattr(pc, '_pval_callback'):
-                        pc._pval_callback = self.get_parameter_values
-                        pc._pctxt_callback = self.get_parameter_context
-                    self._range_dictionary.add_context(pc)
-                    s = PersistedStorage(md, self._persistence_layer.brick_dispatcher, dtype=pc.param_type.storage_encoding, fill_value=pc.param_type.fill_value, mode=self.mode, inline_data_writes=inline_data_writes, auto_flush=auto_flush_values)
-                    self._range_value[parameter_name] = get_value_class(param_type=pc.param_type, domain_set=pc.dom, storage=s)
-
-            if name is None or parameter_dictionary is None:
-                # This appears to be a load
-                _doload(self)
-
-            else:
-                # This appears to be a new coverage
-                # Make sure name and parameter_dictionary are not None
-                if name is None or parameter_dictionary is None:
-                    raise SystemError('\'name\' and \'parameter_dictionary\' cannot be None')
-
-                # Make sure the specified root_dir exists
-                if not in_memory_storage and not os.path.exists(root_dir):
-                    raise SystemError('Cannot find specified \'root_dir\': {0}'.format(root_dir))
-
-                # If the coverage directory exists, load it instead!!
-                if os.path.exists(pth):
-                    log.warn('The specified coverage already exists - performing load of \'{0}\''.format(pth))
-                    _doload(self)
-                    return
-
-                # We've checked everything we can - this is a new coverage!!!
-
-                # Check the mode - must be in 'a' for a new coverage
-                if self.mode != 'a':
-                    self.mode = 'a'
-
-                if not isinstance(name, basestring):
-                    raise TypeError('\'name\' must be of type basestring')
-                self.name = name
-                if temporal_domain is None:
-                    self.temporal_domain = GridDomain(GridShape('temporal',[0]), CRS.standard_temporal(), MutabilityEnum.EXTENSIBLE)
-                elif isinstance(temporal_domain, AbstractDomain):
-                    self.temporal_domain = deepcopy(temporal_domain)
-                else:
-                    raise TypeError('\'temporal_domain\' must be an instance of AbstractDomain')
-
-                if spatial_domain is None or isinstance(spatial_domain, AbstractDomain):
-                    self.spatial_domain = deepcopy(spatial_domain)
-                else:
-                    raise TypeError('\'spatial_domain\' must be an instance of AbstractDomain')
-
-                if not isinstance(parameter_dictionary, ParameterDictionary):
-                    raise TypeError('\'parameter_dictionary\' must be of type ParameterDictionary')
-                self._range_dictionary = ParameterDictionary()
-                self._range_value = RangeValues()
-
-                self._bricking_scheme = bricking_scheme or {'brick_size':100000,'chunk_size':100000}
-
-                self.value_caching = value_caching
-                if self.value_caching:
-                    self._value_cache = collections.OrderedDict()
-
-                self._in_memory_storage = in_memory_storage
-                if self._in_memory_storage:
-                    self._persistence_layer = InMemoryPersistenceLayer()
-                else:
-                    self._persistence_layer = PersistenceLayer(root_dir, persistence_guid, name=name, tdom=temporal_domain, sdom=spatial_domain, mode=self.mode, bricking_scheme=self._bricking_scheme, inline_data_writes=inline_data_writes, auto_flush_values=auto_flush_values, value_caching=value_caching)
-
-                for o, pc in parameter_dictionary.itervalues():
-                    self._append_parameter(pc)
-        except:
-            self._closed = True
-            raise
-
-    @classmethod
-    def _fromdict(cls, cmdict, arg_masks=None):
-        return super(SimplexCoverage, cls)._fromdict(cmdict, {'parameter_dictionary':'_range_dictionary'})
+        raise NotImplementedError('Not implemented in AbstractCoverage')
 
     @property
     def temporal_parameter_name(self):
@@ -501,143 +134,6 @@ class SimplexCoverage(AbstractCoverage):
     @property
     def parameter_dictionary(self):
         return deepcopy(self._range_dictionary)
-
-    @property
-    def persistence_guid(self):
-        if isinstance(self._persistence_layer, InMemoryPersistenceLayer):
-            return None
-        else:
-            return self._persistence_layer.guid
-
-    @property
-    def persistence_dir(self):
-        if isinstance(self._persistence_layer, InMemoryPersistenceLayer):
-            return None
-        else:
-            return self._persistence_layer.master_manager.root_dir
-
-    def append_parameter(self, parameter_context):
-        """
-        Append a ParameterContext to the coverage
-
-        @deprecated use a ParameterDictionary during construction of the coverage
-        """
-        log.warn('SimplexCoverage.append_parameter() is deprecated: use a ParameterDictionary during construction of the coverage')
-        self._append_parameter(parameter_context)
-
-    def _append_parameter(self, parameter_context):
-        """
-        Appends a ParameterContext object to the internal set for this coverage.
-
-        A <b>deep copy</b> of the supplied ParameterContext is added to self._range_dictionary.  An AbstractParameterValue of the type
-        indicated by ParameterContext.param_type is added to self._range_value.  If the ParameterContext indicates that
-        the parameter is a coordinate parameter, it is associated with the indicated axis of the appropriate CRS.
-
-        @param parameter_context    The ParameterContext to append to the coverage <b>as a copy</b>
-        @throws StandardError   If the ParameterContext.axis indicates that it is temporal and a temporal parameter
-        already exists in the coverage
-        """
-        if self.closed:
-            raise IOError('I/O operation on closed file')
-
-        if self.mode == 'r':
-            raise IOError('Coverage not open for writing: mode == \'{0}\''.format(self.mode))
-
-        if not isinstance(parameter_context, ParameterContext):
-            raise TypeError('\'parameter_context\' must be an instance of ParameterContext')
-
-        # Create a deep copy of the ParameterContext
-        pcontext = deepcopy(parameter_context)
-
-        pname = pcontext.name
-
-        no_sdom = self.spatial_domain is None
-
-        ## Determine the correct array shape
-
-        # Get the parameter variability; assign to VariabilityEnum.NONE if None
-        pv=pcontext.variability or VariabilityEnum.NONE
-        if no_sdom and pv in (VariabilityEnum.SPATIAL, VariabilityEnum.BOTH):
-            log.warn('Provided \'parameter_context\' indicates Spatial variability, but coverage has no Spatial Domain')
-
-        if pv == VariabilityEnum.TEMPORAL: # Only varies in the Temporal Domain
-            pcontext.dom = DomainSet(self.temporal_domain.shape.extents, None)
-        elif pv == VariabilityEnum.SPATIAL: # Only varies in the Spatial Domain
-            pcontext.dom = DomainSet(None, self.spatial_domain.shape.extents)
-        elif pv == VariabilityEnum.BOTH: # Varies in both domains
-            # If the Spatial Domain is only a single point on a 0d Topology, the parameter's shape is that of the Temporal Domain only
-            if no_sdom or (len(self.spatial_domain.shape.extents) == 1 and self.spatial_domain.shape.extents[0] == 0):
-                pcontext.dom = DomainSet(self.temporal_domain.shape.extents, None)
-            else:
-                pcontext.dom = DomainSet(self.temporal_domain.shape.extents, self.spatial_domain.shape.extents)
-        elif pv == VariabilityEnum.NONE: # No variance; constant
-            # CBM TODO: Not sure we can have this constraint - precludes situations like a TextType with Variablity==None...
-#            # This is a constant - if the ParameterContext is not a ConstantType, make it one with the default 'x' expr
-#            if not isinstance(pcontext.param_type, ConstantType):
-#                pcontext.param_type = ConstantType(pcontext.param_type)
-
-            # The domain is the total domain - same value everywhere!!
-            # If the Spatial Domain is only a single point on a 0d Topology, the parameter's shape is that of the Temporal Domain only
-            if no_sdom or (len(self.spatial_domain.shape.extents) == 1 and self.spatial_domain.shape.extents[0] == 0):
-                pcontext.dom = DomainSet(self.temporal_domain.shape.extents, None)
-            else:
-                pcontext.dom = DomainSet(self.temporal_domain.shape.extents, self.spatial_domain.shape.extents)
-        else:
-            # Should never get here...but...
-            raise SystemError('Must define the variability of the ParameterContext: a member of VariabilityEnum')
-
-        # Assign the pname to the CRS (if applicable) and select the appropriate domain (default is the spatial_domain)
-        dom = self.spatial_domain
-        if not pcontext.axis is None and AxisTypeEnum.is_member(pcontext.axis, AxisTypeEnum.TIME):
-            dom = self.temporal_domain
-            dom.crs.axes[pcontext.axis] = pcontext.name
-        elif not no_sdom and (pcontext.axis in self.spatial_domain.crs.axes):
-            dom.crs.axes[pcontext.axis] = pcontext.name
-
-        # If this is a ParameterFunctionType parameter, provide a callback to the coverage's _range_value
-        if hasattr(pcontext, '_pval_callback'):
-            pcontext._pval_callback = self.get_parameter_values
-            pcontext._pctxt_callback = self.get_parameter_context
-
-        self._range_dictionary.add_context(pcontext)
-        s = self._persistence_layer.init_parameter(pcontext, self._bricking_scheme)
-        self._range_value[pname] = get_value_class(param_type=pcontext.param_type, domain_set=pcontext.dom, storage=s)
-
-    def get_parameter(self, param_name):
-        """
-        Get a Parameter object by name
-
-        The Parameter object contains the ParameterContext and AbstractParameterValue associated with the param_name
-
-        @param param_name  The local name of the parameter to return
-        @returns A Parameter object containing the context and value for the specified parameter
-        @throws KeyError    The coverage does not contain a parameter with name 'param_name'
-        """
-        if self.closed:
-            raise ValueError('I/O operation on closed file')
-
-        if param_name in self._range_dictionary:
-            p = Parameter(deepcopy(self._range_dictionary.get_context(param_name)), self._range_value[param_name].shape, self._range_value[param_name])
-            return p
-        else:
-            raise KeyError('Coverage does not contain parameter \'{0}\''.format(param_name))
-
-    def list_parameters(self, coords_only=False, data_only=False):
-        """
-        List the names of the parameters contained in the coverage
-
-        @param coords_only List only the coordinate parameters
-        @param data_only   List only the data parameters (non-coordinate) - superseded by coords_only
-        @returns A list of parameter names
-        """
-        if coords_only:
-            lst=[x for x, v in self._range_dictionary.iteritems() if v[1].is_coordinate]
-        elif data_only:
-            lst=[x for x, v in self._range_dictionary.iteritems() if not v[1].is_coordinate]
-        else:
-            lst=[x for x in self._range_dictionary]
-        lst.sort()
-        return lst
 
     def insert_timesteps(self, count, origin=None, oob=True):
         """
@@ -683,6 +179,181 @@ class SimplexCoverage(AbstractCoverage):
             spawn(self._persistence_layer.flush)
         else:
             self._persistence_layer.flush()
+
+    def append_parameter(self, parameter_context):
+        """
+        Appends a ParameterContext object to the internal set for this coverage.
+
+        A <b>deep copy</b> of the supplied ParameterContext is added to self._range_dictionary.  An AbstractParameterValue of the type
+        indicated by ParameterContext.param_type is added to self._range_value.  If the ParameterContext indicates that
+        the parameter is a coordinate parameter, it is associated with the indicated axis of the appropriate CRS.
+
+        @param parameter_context    The ParameterContext to append to the coverage <b>as a copy</b>
+        @throws StandardError   If the ParameterContext.axis indicates that it is temporal and a temporal parameter
+        already exists in the coverage
+        """
+        if self.closed:
+            raise IOError('I/O operation on closed file')
+
+        if self.mode == 'r':
+            raise IOError('Coverage not open for writing: mode == \'{0}\''.format(self.mode))
+
+        if not isinstance(parameter_context, ParameterContext):
+            raise TypeError('\'parameter_context\' must be an instance of ParameterContext')
+
+        # Create a deep copy of the ParameterContext
+        pcontext = deepcopy(parameter_context)
+
+        pname = pcontext.name
+
+        no_sdom = self.spatial_domain is None
+
+        ## Determine the correct array shape
+
+        # Get the parameter variability; assign to VariabilityEnum.NONE if None
+        pv=pcontext.variability or VariabilityEnum.NONE
+        if no_sdom and pv in (VariabilityEnum.SPATIAL, VariabilityEnum.BOTH):
+            log.warn('Provided \'parameter_context\' indicates Spatial variability, but coverage has no Spatial Domain')
+
+        if pv == VariabilityEnum.TEMPORAL: # Only varies in the Temporal Domain
+            pcontext.dom = DomainSet(self.temporal_domain.shape.extents, None)
+        elif pv == VariabilityEnum.SPATIAL: # Only varies in the Spatial Domain
+            pcontext.dom = DomainSet(None, self.spatial_domain.shape.extents)
+        elif pv == VariabilityEnum.BOTH: # Varies in both domains
+            # If the Spatial Domain is only a single point on a 0d Topology, the parameter's shape is that of the Temporal Domain only
+            if no_sdom or (len(self.spatial_domain.shape.extents) == 1 and self.spatial_domain.shape.extents[0] == 0):
+                pcontext.dom = DomainSet(self.temporal_domain.shape.extents, None)
+            else:
+                pcontext.dom = DomainSet(self.temporal_domain.shape.extents, self.spatial_domain.shape.extents)
+        elif pv == VariabilityEnum.NONE: # No variance; constant
+        # CBM TODO: Not sure we can have this constraint - precludes situations like a TextType with Variablity==None...
+        #            # This is a constant - if the ParameterContext is not a ConstantType, make it one with the default 'x' expr
+        #            if not isinstance(pcontext.param_type, ConstantType):
+        #                pcontext.param_type = ConstantType(pcontext.param_type)
+
+            # The domain is the total domain - same value everywhere!!
+            # If the Spatial Domain is only a single point on a 0d Topology, the parameter's shape is that of the Temporal Domain only
+            if no_sdom or (len(self.spatial_domain.shape.extents) == 1 and self.spatial_domain.shape.extents[0] == 0):
+                pcontext.dom = DomainSet(self.temporal_domain.shape.extents, None)
+            else:
+                pcontext.dom = DomainSet(self.temporal_domain.shape.extents, self.spatial_domain.shape.extents)
+        else:
+            # Should never get here...but...
+            raise SystemError('Must define the variability of the ParameterContext: a member of VariabilityEnum')
+
+        # Assign the pname to the CRS (if applicable) and select the appropriate domain (default is the spatial_domain)
+        dom = self.spatial_domain
+        if not pcontext.axis is None and AxisTypeEnum.is_member(pcontext.axis, AxisTypeEnum.TIME):
+            dom = self.temporal_domain
+            dom.crs.axes[pcontext.axis] = pcontext.name
+        elif not no_sdom and (pcontext.axis in self.spatial_domain.crs.axes):
+            dom.crs.axes[pcontext.axis] = pcontext.name
+
+        # If this is a ParameterFunctionType parameter, provide a callback to the coverage's _range_value
+        if hasattr(pcontext, '_pval_callback'):
+            pcontext._pval_callback = self.get_parameter_values
+            pcontext._pctxt_callback = self.get_parameter_context
+
+        self._range_dictionary.add_context(pcontext)
+        s = self._initialize_storage(pcontext)
+        self._range_value[pname] = get_value_class(param_type=pcontext.param_type, domain_set=pcontext.dom, storage=s)
+
+    def _initialize_storage(self, pcontext):
+        raise NotImplementedError('Not implemented by AbstractCoverage')
+
+    def get_parameter(self, param_name):
+        """
+        Get a Parameter object by name
+
+        The Parameter object contains the ParameterContext and AbstractParameterValue associated with the param_name
+
+        @param param_name  The local name of the parameter to return
+        @returns A Parameter object containing the context and value for the specified parameter
+        @throws KeyError    The coverage does not contain a parameter with name 'param_name'
+        """
+        if self.closed:
+            raise ValueError('I/O operation on closed file')
+
+        if param_name in self._range_dictionary:
+            p = Parameter(deepcopy(self._range_dictionary.get_context(param_name)), self._range_value[param_name].shape, self._range_value[param_name])
+            return p
+        else:
+            raise KeyError('Coverage does not contain parameter \'{0}\''.format(param_name))
+
+    def list_parameters(self, coords_only=False, data_only=False):
+        """
+        List the names of the parameters contained in the coverage
+
+        @param coords_only List only the coordinate parameters
+        @param data_only   List only the data parameters (non-coordinate) - superseded by coords_only
+        @returns A list of parameter names
+        """
+        if coords_only:
+            lst=[x for x, v in self._range_dictionary.iteritems() if v[1].is_coordinate]
+        elif data_only:
+            lst=[x for x, v in self._range_dictionary.iteritems() if not v[1].is_coordinate]
+        else:
+            lst=[x for x in self._range_dictionary]
+        lst.sort()
+        return lst
+
+    def get_parameter_values(self, param_name, tdoa=None, sdoa=None, return_value=None):
+        """
+        Retrieve the value for a parameter
+
+        Returns the value from param_name.  Temporal and spatial DomainOfApplication objects can be used to
+        constrain the response.  See DomainOfApplication for details.
+
+        @param param_name   The name of the parameter
+        @param tdoa The temporal DomainOfApplication
+        @param sdoa The spatial DomainOfApplication
+        @param return_value If supplied, filled with response value - currently via OVERWRITE
+        @throws KeyError    The coverage does not contain a parameter with name 'param_name'
+        """
+        if self.closed:
+            raise ValueError('I/O operation on closed file')
+
+        if not param_name in self._range_value:
+            raise KeyError('Parameter \'{0}\' not found in coverage'.format(param_name))
+
+        if return_value is not None:
+            log.warn('Provided \'return_value\' will be OVERWRITTEN')
+
+        slice_ = []
+
+        total_shape = self.temporal_domain.shape.extents
+        tdoa = get_valid_DomainOfApplication(tdoa, total_shape)
+        log.debug('Temporal doa: %s', tdoa.slices)
+        slice_.extend(tdoa.slices)
+
+        if self.spatial_domain is not None:
+            total_shape += self.spatial_domain.shape.extents
+            sdoa = get_valid_DomainOfApplication(sdoa, total_shape[1:])
+            log.debug('Spatial doa: %s', sdoa.slices)
+            slice_.extend(sdoa.slices)
+
+        slice_ = utils.fix_slice(slice_, total_shape)
+        log.debug('Getting slice: %s', slice_)
+
+        if self.value_caching:
+            # Make slice_ fully expressed such that there are no "None" entries - this lets us ignore domain growth
+            slk = utils.express_slice(slice_, total_shape)
+            key=(param_name, utils.hash_any(slk))
+            try:
+                return_value = self._value_cache.pop(key)
+            #                print 'Vals from cache for \'%s\'' % param_name
+            except KeyError:
+            #                print 'New vals for \'%s\'' % param_name
+                return_value = self._range_value[param_name][slice_]
+                if len(self._value_cache) >= self.VALUE_CACHE_LIMIT:
+                    k, v = self._value_cache.popitem(0)
+                    v = None
+                    del k, v
+            self._value_cache[key] = return_value
+        else:
+            return_value = self._range_value[param_name][slice_]
+
+        return return_value
 
     def set_time_values(self, value, tdoa=None):
         """
@@ -747,63 +418,6 @@ class SimplexCoverage(AbstractCoverage):
 
         self._range_value[param_name][slice_] = value
 
-    def get_parameter_values(self, param_name, tdoa=None, sdoa=None, return_value=None):
-        """
-        Retrieve the value for a parameter
-
-        Returns the value from param_name.  Temporal and spatial DomainOfApplication objects can be used to
-        constrain the response.  See DomainOfApplication for details.
-
-        @param param_name   The name of the parameter
-        @param tdoa The temporal DomainOfApplication
-        @param sdoa The spatial DomainOfApplication
-        @param return_value If supplied, filled with response value - currently via OVERWRITE
-        @throws KeyError    The coverage does not contain a parameter with name 'param_name'
-        """
-        if self.closed:
-            raise ValueError('I/O operation on closed file')
-
-        if not param_name in self._range_value:
-            raise KeyError('Parameter \'{0}\' not found in coverage'.format(param_name))
-
-        if return_value is not None:
-            log.warn('Provided \'return_value\' will be OVERWRITTEN')
-
-        slice_ = []
-
-        total_shape = self.temporal_domain.shape.extents
-        tdoa = get_valid_DomainOfApplication(tdoa, total_shape)
-        log.debug('Temporal doa: %s', tdoa.slices)
-        slice_.extend(tdoa.slices)
-
-        if self.spatial_domain is not None:
-            total_shape += self.spatial_domain.shape.extents
-            sdoa = get_valid_DomainOfApplication(sdoa, total_shape[1:])
-            log.debug('Spatial doa: %s', sdoa.slices)
-            slice_.extend(sdoa.slices)
-
-        slice_ = utils.fix_slice(slice_, total_shape)
-        log.debug('Getting slice: %s', slice_)
-
-        if self.value_caching:
-            # Make slice_ fully expressed such that there are no "None" entries - this lets us ignore domain growth
-            slk = utils.express_slice(slice_, total_shape)
-            key=(param_name, utils.hash_any(slk))
-            try:
-                return_value = self._value_cache.pop(key)
-#                print 'Vals from cache for \'%s\'' % param_name
-            except KeyError:
-#                print 'New vals for \'%s\'' % param_name
-                return_value = self._range_value[param_name][slice_]
-                if len(self._value_cache) >= self.VALUE_CACHE_LIMIT:
-                    k, v = self._value_cache.popitem(0)
-                    v=None
-                    del k, v
-            self._value_cache[key] = return_value
-        else:
-            return_value = self._range_value[param_name][slice_]
-
-        return return_value
 
     def clear_value_cache(self):
         if self.value_caching:
@@ -859,7 +473,7 @@ class SimplexCoverage(AbstractCoverage):
         The <i>pdict</i> argument is used to check for validity of <i>parameter_name</i>
 
         @param parameter_name A string parameter name; may be an iterable of such members
-        @pdict  A ParameterDictionary
+        @pdict  A ParameterDictionary; self._range_dictionary if None
         """
         if pdict is None:
             pdict = self._range_dictionary
@@ -1013,10 +627,89 @@ class SimplexCoverage(AbstractCoverage):
 
         return size
 
-    def refresh(self):
-        if not self._in_memory_storage:
-            self.close()
-            self.__init__(os.path.split(self.persistence_dir)[0], self.persistence_guid, mode=self.mode)
+    @property
+    def persistence_guid(self):
+        if isinstance(self._persistence_layer, InMemoryPersistenceLayer):
+            return None
+        else:
+            return self._persistence_layer.guid
+
+    @property
+    def persistence_dir(self):
+        if isinstance(self._persistence_layer, InMemoryPersistenceLayer):
+            return None
+        else:
+            return self._persistence_layer.master_manager.root_dir
+
+    def _initialize_storage(self, pcontext):
+        return self._persistence_layer.init_parameter(pcontext, self._bricking_scheme)
+
+    def has_dirty_values(self):
+        return self._persistence_layer.has_dirty_values()
+
+    def get_dirty_values_async_result(self):
+        if self.mode == 'r':
+            log.warn('Coverage not open for writing: mode=%s', self.mode)
+            from gevent.event import AsyncResult
+            ret = AsyncResult()
+            ret.set(True)
+            return ret
+
+        return self._persistence_layer.get_dirty_values_async_result()
+
+    def flush_values(self):
+        if self.mode == 'r':
+            log.warn('Coverage not open for writing: mode=%s', self.mode)
+            return
+
+        return self._persistence_layer.flush_values()
+
+    def flush(self):
+        if self.mode == 'r':
+            log.warn('Coverage not open for writing: mode=%s', self.mode)
+            return
+
+        self._persistence_layer.flush()
+
+    def close(self, force=False, timeout=None):
+        if not hasattr(self, '_closed'):
+            # _closed is the first attribute added to the coverage object (in AbstractCoverage)
+            # If it's not there, a TypeError has likely occurred while instantiating the coverage
+            # nothing else exists and we can just return
+            return
+        if not self._closed:
+            log.info('Closing coverage \'%s\'', self.name if hasattr(self,'name') else 'unnamed')
+
+            if self.mode != 'r':
+                log.debug('Ensuring dirty values have been flushed...')
+                if not force:
+                    self.get_dirty_values_async_result().get(timeout=timeout)
+
+            # If the _persistence_layer attribute is present, call it's close function
+            if hasattr(self, '_persistence_layer'):
+                self._persistence_layer.close(force=force, timeout=timeout) # Calls flush() on the persistence layer
+
+            # Not much else to do here at this point....but can add other things down the road
+
+        self._closed = True
+
+    @property
+    def closed(self):
+        return self._closed
+
+    @classmethod
+    def copy(cls, cov_obj, *args):
+        raise NotImplementedError('Coverages cannot yet be copied. You can load multiple \'independent\' copies of the same coverage, but be sure to save them to different names.')
+#        if not isinstance(cov_obj, AbstractCoverage):
+#            raise StandardError('cov_obj must be an instance or subclass of AbstractCoverage: object is {0}'.format(type(cov_obj)))
+#
+#        # NTK:
+#        # Args need to have 1-n (ParameterContext, DomainOfApplication, DomainOfApplication,) tuples
+#        # Need to pull the parameter_dictionary, spatial_domain and temporal_domain from cov_obj (TODO: copies!!)
+#        # DOA's and PC's used to copy data - TODO: Need way of reshaping PC's?
+#        ccov = SimplexCoverage(name='', _range_dictionary=None, spatial_domain=None, temporal_domain=None)
+#
+#        return ccov
 
     @property
     def info(self):
@@ -1048,6 +741,290 @@ class SimplexCoverage(AbstractCoverage):
         lst.append('Data Parameters: {0}'.format(self.list_parameters(coords_only=False, data_only=True)))
 
         return '\n'.join(lst)
+
+    def __del__(self):
+        self.close()
+
+
+class ViewCoverage(AbstractCoverage):
+    # TODO: Implement ViewCoverage
+    """
+    References 1 AbstractCoverage and applies a Filter
+    """
+    def __init__(self, root_dir, persistence_guid, reference_coverage_location=None, name=None, parameter_dictionary=None, mode=None):
+        AbstractCoverage.__init__(self, mode=mode)
+
+        try:
+            # Make sure root_dir and persistence_guid are both not None and are strings
+            if not isinstance(root_dir, str) or not isinstance(persistence_guid, str):
+                raise TypeError('\'root_dir\' and \'persistence_guid\' must be instances of str')
+
+            root_dir = root_dir if not root_dir.endswith(persistence_guid) else os.path.split(root_dir)[0]
+
+            pth = os.path.join(root_dir, persistence_guid)
+
+            def _doload(self):
+                # Make sure the coverage directory exists
+                if not os.path.exists(pth):
+                    raise SystemError('Cannot find specified coverage: {0}'.format(pth))
+
+                self._persistence_layer = ViewPersistenceLayer(root_dir, persistence_guid, mode=self.mode)
+
+                self.name = self._persistence_layer.name
+
+                self.reference_coverage = AbstractCoverage.load(self._persistence_layer.rcov_loc, mode='r')
+
+                self.setup(self._persistence_layer.param_dict)
+
+            if reference_coverage_location is None or name is None or parameter_dictionary is None:
+                # This appears to be a load
+                _doload(self)
+            else:
+                # This appears to be a new coverage
+                # Make sure name and parameter_dictionary are not None
+                if reference_coverage_location is None or name is None or parameter_dictionary is None:
+                    raise SystemError('\'reference_coverage_location\', \'name\' and \'parameter_dictionary\' cannot be None')
+
+                # If the coverage directory exists, load it instead!!
+                if os.path.exists(pth):
+                    log.warn('The specified coverage already exists - performing load of \'{0}\''.format(pth))
+                    _doload(self)
+                    return
+
+                if not isinstance(reference_coverage_location, str):
+                    raise TypeError('\'reference_coverage_location\' must be of type str')
+
+                if not os.path.exists(reference_coverage_location):
+                    raise IOError('\'reference_coverage_location\' cannot be found: \'{0}\''.format(reference_coverage_location))
+
+                # We've checked everything we can - this is a new coverage!!!
+
+                # Check the mode - must be in 'a' for a new coverage
+                if self.mode != 'a':
+                    self.mode = 'a'
+
+                if not isinstance(name, basestring):
+                    raise TypeError('\'name\' must be of type basestring')
+                self.name = name
+
+                # Open the reference coverage - ALWAYS in read-only mode
+                self.reference_coverage = AbstractCoverage.load(reference_coverage_location, mode='r')
+
+                self.__setup(parameter_dictionary)
+
+                self._persistence_layer = ViewPersistenceLayer(root_dir, persistence_guid, rcov_loc=reference_coverage_location, name=self.name, param_dict=parameter_dictionary, mode=self.mode)
+
+        except:
+            self._closed = True
+            raise
+
+    def __setup(self, parameter_dictionary):
+        for p in parameter_dictionary:
+            if p in self.reference_coverage._range_dictionary:
+                # Add the context from the reference coverage
+                self._range_dictionary.add_context(self.reference_coverage._range_dictionary.get_context(p))
+                # Add the value class from the reference coverage
+                self._range_value[p] = self.reference_coverage._range_value[p]
+            else:
+                log.warn('Parameter \'{0}\' skipped; not in \'reference_coverage\'')
+
+        self.temporal_domain = self.reference_coverage.temporal_domain
+        self.spatial_domain = self.reference_coverage.spatial_domain
+
+    def insert_timesteps(self, count, origin=None):
+        raise TypeError('Cannot insert timesteps into a ViewCoverage')
+
+    def set_time_values(self, value, tdoa=None):
+        raise TypeError('Cannot set time values against a ViewCoverage')
+
+    def set_parameter_values(self, param_name, value, tdoa=None, sdoa=None):
+        raise TypeError('Cannot set parameter values against a ViewCoverage')
+
+    def refresh(self):
+        self.close()
+
+        self.__init__(os.path.split(self.persistence_dir)[0],
+            self.persistence_guid,
+            reference_coverage_location=self.reference_coverage.persistence_dir,
+            mode=self.mode)
+
+
+class ComplexCoverage(AbstractCoverage):
+    # TODO: Implement
+    """
+    References 1-n coverages
+    """
+    def __init__(self, root_dir, persistence_guid, reference_coverages=None, additional_parameters=None, join_axis=0):
+        AbstractCoverage.__init__(self)
+        if join_axis == 0:
+            # Complex parametric - combine parameters from multiple coverages
+            self._build_parametric(reference_coverages)
+        elif join_axis == 1:
+            # Complex temporal - combine coverages temporally
+            raise NotImplementedError('Not yet implemented')
+        elif join_axis == 2:
+            # Complex spatial - combine coverages across a higher-order topology
+            raise NotImplementedError('Not yet implemented')
+
+    def _build_parametric(self, rcovs, additional_params):
+        self._reference_covs = {}
+        self._params = {}
+        ntimes = None
+
+        for p in additional_params:
+            self._params[p.name] = p
+
+        for cpth in rcovs:
+            cov = AbstractCoverage.load(cpth)
+            if ntimes is None:
+                ntimes = cov.num_timesteps
+            else:
+                if ntimes != cov.num_timesteps:
+                    raise ValueError('Coverage does not have correct # of timestseps: {0}'.format(cpth))
+
+            if not cpth in self._reference_covs:
+                self._reference_covs[cpth] = cov
+
+            for p in cov.list_parameters():
+                if not p in self._params:
+                    self._params[p] = self._reference_covs[cpth]
+
+
+class SimplexCoverage(AbstractCoverage):
+    """
+    A concrete implementation of AbstractCoverage consisting of 2 domains (temporal and spatial)
+    and a collection of parameters associated with one or both of the domains.  Each parameter is defined by a
+    ParameterContext object (provided via the ParameterDictionary) and has content represented by a concrete implementation
+    of the AbstractParameterValue class.
+
+    """
+
+    def __init__(self, root_dir, persistence_guid, name=None, parameter_dictionary=None, temporal_domain=None, spatial_domain=None, mode=None, in_memory_storage=False, bricking_scheme=None, inline_data_writes=True, auto_flush_values=True, value_caching=True):
+        """
+        Constructor for SimplexCoverage
+
+        @param root_dir The root directory for storage of this coverage
+        @param persistence_guid The persistence uuid for this coverage
+        @param name The name of the coverage
+        @param parameter_dictionary    a ParameterDictionary object expected to contain one or more valid ParameterContext objects
+        @param spatial_domain  a concrete instance of AbstractDomain for the spatial domain component
+        @param temporal_domain a concrete instance of AbstractDomain for the temporal domain component
+        @param mode the file mode for the coverage; one of 'r', 'a', 'r+', or 'w'; defaults to 'r'
+        @param in_memory_storage    if False (default), HDF5 persistence is used; otherwise, nothing is written to disk and all data is held in memory only
+        @param bricking_scheme  the bricking scheme for the coverage; a dict of the form {'brick_size': #, 'chunk_size': #}
+        @param inline_data_writes   if True (default), brick data is written as it is set; otherwise it is written out-of-band by worker processes or threads
+        @param auto_flush_values    if True (default), brick data is flushed immediately; otherwise it is buffered until SimplexCoverage.flush_values() is called
+        @param value_caching  if True (default), up to 30 value requests are cached for rapid duplicate retrieval
+        """
+        AbstractCoverage.__init__(self, mode=mode)
+        try:
+            # Make sure root_dir and persistence_guid are both not None and are strings
+            if not isinstance(root_dir, str) or not isinstance(persistence_guid, str):
+                raise TypeError('\'root_dir\' and \'persistence_guid\' must be instances of str')
+
+            root_dir = root_dir if not root_dir.endswith(persistence_guid) else os.path.split(root_dir)[0]
+
+            pth=os.path.join(root_dir, persistence_guid)
+
+            def _doload(self):
+                # Make sure the coverage directory exists
+                if not os.path.exists(pth):
+                    raise SystemError('Cannot find specified coverage: {0}'.format(pth))
+
+                # All appears well - load it up!
+                self._persistence_layer = PersistenceLayer(root_dir, persistence_guid, mode=self.mode)
+
+                self.name = self._persistence_layer.name
+                self.spatial_domain = self._persistence_layer.sdom
+                self.temporal_domain = self._persistence_layer.tdom
+
+                self._bricking_scheme = self._persistence_layer.global_bricking_scheme
+
+                self._in_memory_storage = False
+
+                auto_flush_values = self._persistence_layer.auto_flush_values
+                inline_data_writes = self._persistence_layer.inline_data_writes
+                self.value_caching = self._persistence_layer.value_caching
+
+                from coverage_model.persistence import PersistedStorage
+                for parameter_name in self._persistence_layer.parameter_metadata.keys():
+                    md = self._persistence_layer.parameter_metadata[parameter_name]
+                    pc = md.parameter_context
+                    if hasattr(pc, '_pval_callback'):
+                        pc._pval_callback = self.get_parameter_values
+                        pc._pctxt_callback = self.get_parameter_context
+                    self._range_dictionary.add_context(pc)
+                    s = PersistedStorage(md, self._persistence_layer.brick_dispatcher, dtype=pc.param_type.storage_encoding, fill_value=pc.param_type.fill_value, mode=self.mode, inline_data_writes=inline_data_writes, auto_flush=auto_flush_values)
+                    self._range_value[parameter_name] = get_value_class(param_type=pc.param_type, domain_set=pc.dom, storage=s)
+
+            if name is None or parameter_dictionary is None:
+                # This appears to be a load
+                _doload(self)
+
+            else:
+                # This appears to be a new coverage
+                # Make sure name and parameter_dictionary are not None
+                if name is None or parameter_dictionary is None:
+                    raise SystemError('\'name\' and \'parameter_dictionary\' cannot be None')
+
+                # Make sure the specified root_dir exists
+                if not in_memory_storage and not os.path.exists(root_dir):
+                    raise SystemError('Cannot find specified \'root_dir\': {0}'.format(root_dir))
+
+                # If the coverage directory exists, load it instead!!
+                if os.path.exists(pth):
+                    log.warn('The specified coverage already exists - performing load of \'{0}\''.format(pth))
+                    _doload(self)
+                    return
+
+                # We've checked everything we can - this is a new coverage!!!
+
+                # Check the mode - must be in 'a' for a new coverage
+                if self.mode != 'a':
+                    self.mode = 'a'
+
+                if not isinstance(name, basestring):
+                    raise TypeError('\'name\' must be of type basestring')
+                self.name = name
+                if temporal_domain is None:
+                    self.temporal_domain = GridDomain(GridShape('temporal',[0]), CRS.standard_temporal(), MutabilityEnum.EXTENSIBLE)
+                elif isinstance(temporal_domain, AbstractDomain):
+                    self.temporal_domain = deepcopy(temporal_domain)
+                else:
+                    raise TypeError('\'temporal_domain\' must be an instance of AbstractDomain')
+
+                if spatial_domain is None or isinstance(spatial_domain, AbstractDomain):
+                    self.spatial_domain = deepcopy(spatial_domain)
+                else:
+                    raise TypeError('\'spatial_domain\' must be an instance of AbstractDomain')
+
+                if not isinstance(parameter_dictionary, ParameterDictionary):
+                    raise TypeError('\'parameter_dictionary\' must be of type ParameterDictionary')
+
+                self._bricking_scheme = bricking_scheme or {'brick_size':100000,'chunk_size':100000}
+
+                self.value_caching = value_caching
+
+                self._in_memory_storage = in_memory_storage
+                if self._in_memory_storage:
+                    self._persistence_layer = InMemoryPersistenceLayer()
+                else:
+                    self._persistence_layer = PersistenceLayer(root_dir, persistence_guid, name=name, tdom=temporal_domain, sdom=spatial_domain, mode=self.mode, bricking_scheme=self._bricking_scheme, inline_data_writes=inline_data_writes, auto_flush_values=auto_flush_values, value_caching=value_caching)
+
+                for o, pc in parameter_dictionary.itervalues():
+                    self.append_parameter(pc)
+        except:
+            self._closed = True
+            raise
+
+    @classmethod
+    def _fromdict(cls, cmdict, arg_masks=None):
+        return super(SimplexCoverage, cls)._fromdict(cmdict, {'parameter_dictionary':'_range_dictionary'})
+
+    def refresh(self):
+        if not self._in_memory_storage:
+            self.close()
+            self.__init__(os.path.split(self.persistence_dir)[0], self.persistence_guid, mode=self.mode)
 
 
 #=========================
