@@ -13,7 +13,7 @@ from ion_functions.test.base_test import BaseUnitTestCase
 import numpy as np
 from ion_functions import qc_functions as qcf
 
-@attr('Unit', group='qc')
+@attr('UNIT', group='qc')
 class TestQCFunctionsUnit(BaseUnitTestCase):
 
     def setUp(self):
@@ -96,3 +96,96 @@ class TestQCFunctionsUnit(BaseUnitTestCase):
         got = qcf.dataqc_stuckvaluetest(x, reso, num)
 
         self.assertTrue(np.array_equal(got, out))
+
+    def test_dataqc_polytrendtest(self):
+        """
+        Test as defined in DPS:
+        https://alfresco.oceanobservatories.org/alfresco/d/d/workspace/SpacesStore/c33037ab-9dd5-4615-8218-0957f60a47f3/1341-10007_Data_Product_SPEC_TRNDTST_OOI.pdf
+
+        4.6 Code Verification and Test Data Sets
+        The algorithm code will be verified using the test data set provided, which contains inputs and
+        their associated correct outputs. CI will verify that the algorithm code is correct by checking that
+        the algorithm pressure output, generated using the test data inputs, is identical to the test data
+        output.
+        n = 1
+        nstd = 3
+
+        x_in = 0.8147, 0.9058, 0.1270, 0.9134, 0.6324, 0.0975, 0.2785, 0.5469, 0.9575, 0.9649
+        t = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+        x_out = 1
+
+
+        x_in = 0.6557, 0.2357, 1.2491, 1.5340, 1.4787, 1.7577, 1.9431, 1.7922, 2.2555, 1.9712
+        t = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+        x_out = 1
+
+
+        x_in = 0.7060, 0.5318, 1.2769, 1.5462, 2.0971, 3.3235, 3.6948, 3.8171, 4.9502, 4.5344
+        t = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+        x_out = 0
+
+
+        x_in = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        t = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+        x_out = 1
+
+
+        x_in = 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
+        t = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+        x_out = 1
+
+
+        x_in = 0.4387, -0.1184, -0.2345, -0.7048, -1.8131, -2.0102, -2.5544, -2.8537, -3.2906, -3.7453
+        t = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+        x_out = 0
+
+
+        @return:
+        """
+        n = 1
+        nstd = 3
+
+        x_in = [0.8147, 0.9058, 0.1270, 0.9134, 0.6324, 0.0975, 0.2785, 0.5469, 0.9575, 0.9649]
+        t = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        x_out = 1
+
+        got = qcf.dataqc_polytrendtest(x_in, t, n, nstd)
+        self.assertTrue(np.array_equal(got, x_out))
+
+        x_in = [0.6557, 0.2357, 1.2491, 1.5340, 1.4787, 1.7577, 1.9431, 1.7922, 2.2555, 1.9712]
+        t = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        x_out = 1
+
+        got = qcf.dataqc_polytrendtest(x_in, t, n, nstd)
+        self.assertTrue(np.array_equal(got, x_out))
+
+        x_in = [0.7060, 0.5318, 1.2769, 1.5462, 2.0971, 3.3235, 3.6948, 3.8171, 4.9502, 4.5344]
+        t = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        x_out = 0
+
+        got = qcf.dataqc_polytrendtest(x_in, t, n, nstd)
+        self.assertTrue(np.array_equal(got, x_out))
+
+        x_in = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        t = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        x_out = 1
+
+        got = qcf.dataqc_polytrendtest(x_in, t, n, nstd)
+        self.assertTrue(np.array_equal(got, x_out))
+
+        x_in = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+        t = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        x_out = 1
+
+        got = qcf.dataqc_polytrendtest(x_in, t, n, nstd)
+        self.assertTrue(np.array_equal(got, x_out))
+
+        x_in = [0.4387, -0.1184, -0.2345, -0.7048, -1.8131, -2.0102, -2.5544, -2.8537, -3.2906, -3.7453]
+        t = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        x_out = 0
+
+        got = qcf.dataqc_polytrendtest(x_in, t, n, nstd)
+        self.assertTrue(np.array_equal(got, x_out))
+
+
+

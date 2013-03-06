@@ -42,7 +42,7 @@ def isnumeric(dat):
 
     """
 
-    return np.array([np.asanyarray(d).dtype.kind in NUMERIC_KINDS for d in np.nditer(np.asanyarray(dat))]).astype('int8')
+    return np.array([np.atleast_1d(d).dtype.kind in NUMERIC_KINDS for d in np.nditer(np.atleast_1d(dat))]).astype('int8')
 
 
 def isreal(dat):
@@ -114,7 +114,7 @@ def isreal(dat):
          1     1     0     1     1    0
     """
 
-    return np.array([np.asanyarray(d).dtype.kind in REAL_KINDS for d in np.nditer(np.asanyarray(dat))]).astype('int8')
+    return np.array([np.atleast_1d(d).dtype.kind in REAL_KINDS for d in np.nditer(np.atleast_1d(dat))]).astype('int8')
 
 
 def isscalar(dat):
@@ -136,7 +136,7 @@ def isscalar(dat):
 
 
     """
-    return np.asanyarray(dat).size == 1
+    return np.atleast_1d(dat).size == 1
 
 
 def isvector(dat):
@@ -162,7 +162,7 @@ def isvector(dat):
 
 
     """
-    return np.asanyarray(dat).size > 1
+    return np.atleast_1d(dat).size > 1
 
 
 def isempty(dat):
@@ -181,7 +181,7 @@ def isempty(dat):
          1
     """
 
-    return np.asanyarray(dat).size == 0
+    return np.atleast_1d(dat).size == 0
 
 
 def dataqc_globalrangetest(dat, datlim):
@@ -235,8 +235,8 @@ def dataqc_globalrangetest(dat, datlim):
 
     """
 
-    dat_arr = np.asanyarray(dat)
-    datlim_arr = np.asanyarray(datlim)
+    dat_arr = np.atleast_1d(dat)
+    datlim_arr = np.atleast_1d(datlim)
 
     if not isnumeric(dat_arr).all():
         raise ValueError('\'dat\' must be numeric')
@@ -407,7 +407,7 @@ def dataqc_spiketest(dat, acc, N=5, L=5):
 
     """
 
-    dat_arr = np.asanyarray(dat)
+    dat_arr = np.atleast_1d(dat)
 
     if not isnumeric(dat_arr).all():
         raise ValueError('\'dat\' must be numeric')
@@ -563,7 +563,7 @@ def dataqc_stuckvaluetest(x, reso, num=10):
     out=logical(out);
     """
 
-    dat_arr = np.asanyarray(x)
+    dat_arr = np.atleast_1d(x)
 
     if not isnumeric(dat_arr).all():
         raise ValueError('\'x\' must be numeric')
@@ -601,6 +601,134 @@ def dataqc_stuckvaluetest(x, reso, num=10):
                 out[slice_] = 0
 
     return out
+
+
+def dataqc_polytrendtest(dat, t, ord_n=1, nstd=3):
+    """
+    Stuck Value Test Quality Control Algorithm as defined in the DPS for SPEC_TRNDTST - DCN 1341-10007
+    https://alfresco.oceanobservatories.org/alfresco/d/d/workspace/SpacesStore/c33037ab-9dd5-4615-8218-0957f60a47f3/1341-10007_Data_Product_SPEC_TRNDTST_OOI.pdf
+
+    % DATAQC_POLYTRENDTEST Data quality control algorithm testing
+    % if measurements contain a significant portion of a polynomial.
+    % Returns 1 if this is not the case, else 0.
+    %
+    % Time-stamp: <2010-10-29 13:56:46 mlankhorst>
+    %
+    % RATIONALE: The purpose of this test is to check if a significant
+    % fraction of the variability in a time series can be explained
+    % by a drift, possibly interpreted as a sensor drift. This drift
+    % is assumed to be a polynomial of order ORD. Use ORD=1 to
+    % consider a linear drift
+    %
+    % METHODOLOGY: The time series DAT is passed to MatLab's POLYFIT
+    % routine to obtain a polynomial fit PP to DAT, and the
+    % difference DAT-PP is compared to the original DAT. If the
+    % standard deviation of (DAT-PP) is less than that of DAT by a
+    % factor of NSTD, the time series is assumed to contain a
+    % significant trend (output will be 0), else not (output will be
+    % 1).
+    %
+    % USAGE: OUT=dataqc_polytrendtest(DAT,ORD,NSTD);
+    %
+    % OUT: Boolean scalar, 0 if trend is detected, 1 if not.
+    %
+    % DAT: Input dataset, a numeric real vector.
+    % ORD (optional, defaults to 1): Polynomial order.
+    % NSTD (optional, defaults to 3): Factor by how much the
+    % standard deviation must be reduced before OUT
+    % switches from 1 to 0
+    %
+    function out=dataqc_polytrendtest(varargin);
+    error(nargchk(1,3,nargin,'struct'))
+    dat=varargin{1};
+    if ~isnumeric(dat)
+        error('DAT must be numeric.')
+    end
+    if ~isvector(dat)
+        error('DAT must be vector.')
+    end
+    if ~isreal(dat)
+        error('DAT must be real.')
+    end
+    ord=1;
+    nstd=3;
+    if nargin==2
+        if ~isempty(varargin{2})
+            ord=varargin{2};
+        end
+    end
+    if nargin==3
+        if ~isempty(varargin{2})
+            ord=varargin{2};
+        end
+        if ~isempty(varargin{3})
+            nstd=varargin{3};
+        end
+    end
+    if ~isnumeric(ord)
+        error('ORD must be numeric.')
+    end
+    if ~isscalar(ord)
+        error('ORD must be scalar.')
+    end
+    if ~isreal(ord)
+        error('ORD must be real.')
+    end
+    if ~isnumeric(nstd)
+        error('NSTD must be numeric.')
+    end
+    if ~isscalar(nstd)
+        error('NSTD must be scalar.')
+    end
+    if ~isreal(nstd)
+        error('NSTD must be real.')
+    end
+    ord=round(abs(ord));
+    nstd=abs(nstd);
+    ll=length(dat);
+    x=[1:ll];
+    pp=polyfit(x,dat,ord);
+    datpp=polyval(pp,x);
+    if (nstd*std(dat-datpp))<std(dat)
+        out=0;
+    else
+        out=1;
+    end
+    """
+
+    dat_arr = np.atleast_1d(dat)
+
+    if not isnumeric(dat_arr).all():
+        raise ValueError('\'dat\' must be numeric')
+
+    if not isvector(dat_arr):
+        raise ValueError('\'dat\' must be a vector')
+
+    if not isreal(dat_arr).all():
+        raise ValueError('\'dat\' must be real')
+
+    for k, arg in {'ord_n': ord_n, 'nstd': nstd}.iteritems():
+        if not isnumeric(arg).all():
+            raise ValueError('\'{0}\' must be numeric'.format(k))
+
+        if not isscalar(arg):
+            raise ValueError('\'{0}\' must be a scalar'.format(k))
+
+        if not isreal(arg).all():
+            raise ValueError('\'{0}\' must be real'.format(k))
+
+    ord_n = int(round(abs(ord_n)))
+    nstd = int(abs(nstd))
+    # Not needed because time is incorporated as 't'
+    # ll = len(dat)
+    # t = range(ll)
+    pp = np.polyfit(t, dat, ord_n)
+    datpp = np.polyval(pp, t)
+
+    if np.atleast_1d((np.std(dat - datpp) * nstd) < np.std(dat)).all():
+        return 0
+
+    return 1
 
 
 
