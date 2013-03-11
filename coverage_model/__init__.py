@@ -5,7 +5,7 @@ from coverage_model.parameter_functions import PythonFunction, NumexprFunction
 from parameter import ParameterContext, ParameterDictionary, ParameterFunctionValidator
 from parameter_types import ArrayType, BooleanType, CategoryRangeType, CategoryType, ConstantType, CountRangeType, \
     CountType, FunctionType, QuantityRangeType, QuantityType, RecordType, ReferenceType, TextType, TimeRangeType, \
-    TimeType, VectorType, ConstantRangeType, ParameterFunctionType
+    TimeType, VectorType, ConstantRangeType, ParameterFunctionType, SparseConstantType
 from parameter_values import get_value_class
 from coverage_model import utils
 from utils import create_guid, fix_slice
@@ -18,7 +18,7 @@ _core = ['ParameterContext', 'ParameterDictionary', 'ParameterFunctionValidator'
 
 _types = ['ArrayType', 'BooleanType', 'CategoryRangeType', 'CategoryType', 'ConstantType', 'CountRangeType',
           'CountType', 'FunctionType', 'QuantityRangeType', 'QuantityType', 'RecordType', 'ReferenceType', 'TextType',
-          'TimeRangeType', 'TimeType', 'VectorType', 'ConstantRangeType', 'ParameterFunctionType']
+          'TimeRangeType', 'TimeType', 'VectorType', 'ConstantRangeType', 'ParameterFunctionType', 'SparseConstantType']
 
 _functions = ['NumexprFunction', 'PythonFunction']
 
