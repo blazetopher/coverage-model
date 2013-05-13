@@ -609,7 +609,7 @@ class TestParameterValuesInteropInt(CoverageModelIntTestCase):
     def test_array_value_interop(self):
         # Setup the type
         arr_type = ArrayType()
-        arr_type_ie = ArrayType(inner_encoding='float32')
+        arr_type_ie = ArrayType(inner_encoding=np.dtype('float32'))
 
         # Setup the values
         ntimes = 20

@@ -36,6 +36,24 @@ if platform.uname()[-2] != 'armv7l':
 # Abstract Parameter Type Objects
 #==================
 
+def verify_encoding(value_encoding):
+    if value_encoding is None:
+        value_encoding = np.dtype('float32').str
+    else:
+        try:
+            dt = np.dtype(value_encoding)
+            if dt.isbuiltin not in (0,1):
+                raise TypeError('\'value_encoding\' must be a valid numpy dtype: {0}'.format(value_encoding))
+            if dt in UNSUPPORTED_DTYPES:
+                raise TypeError('\'value_encoding\' {0} is not supported by H5py: UNSUPPORTED types ==> {1}'.format(value_encoding, UNSUPPORTED_DTYPES))
+
+            value_encoding = dt.str
+
+        except TypeError:
+            raise
+
+    return value_encoding
+
 class AbstractParameterType(AbstractIdentifiable):
     """
     Base class for parameter typing
@@ -418,20 +436,7 @@ class QuantityType(AbstractSimplexParameterType):
         """
         kwc=kwargs.copy()
         AbstractSimplexParameterType.__init__(self, value_class='NumericValue', **kwc)
-        if value_encoding is None:
-            self._value_encoding = np.dtype('float32').str
-        else:
-            try:
-                dt = np.dtype(value_encoding)
-                if dt.isbuiltin not in (0,1):
-                    raise TypeError('\'value_encoding\' must be a valid numpy dtype: {0}'.format(value_encoding))
-                if dt in UNSUPPORTED_DTYPES:
-                    raise TypeError('\'value_encoding\' {0} is not supported by H5py: UNSUPPORTED types ==> {1}'.format(value_encoding, UNSUPPORTED_DTYPES))
-
-                self._value_encoding = dt.str
-
-            except TypeError:
-                raise
+        self._value_encoding = verify_encoding(value_encoding)
 
         self._template_attrs['uom'] = uom or 'unspecified'
         self._template_attrs['constraint'] = constraint
@@ -545,20 +550,7 @@ class ParameterFunctionType(AbstractSimplexParameterType):
         if not isinstance(function, AbstractFunction):
             raise TypeError('\'function\' must be a subclass of AbstractFunction')
 
-        if value_encoding is None:
-            self._value_encoding = np.dtype('float32').str
-        else:
-            try:
-                dt = np.dtype(value_encoding)
-                if dt.isbuiltin not in (0,1):
-                    raise TypeError('\'value_encoding\' must be a valid numpy dtype: {0}'.format(value_encoding))
-                if dt in UNSUPPORTED_DTYPES:
-                    raise TypeError('\'value_encoding\' {0} is not supported by H5py: UNSUPPORTED types ==> {1}'.format(value_encoding, UNSUPPORTED_DTYPES))
-
-                self._value_encoding = dt.str
-
-            except TypeError:
-                raise
+        self._value_encoding = verify_encoding(value_encoding)
 
         self._template_attrs['function'] = function
 
@@ -795,6 +787,9 @@ class ArrayType(AbstractComplexParameterType):
         kwc=kwargs.copy()
         AbstractComplexParameterType.__init__(self, value_class='ArrayValue', **kwc)
 
-        self.inner_encoding = inner_encoding
+        if inner_encoding is None or np.dtype(inner_encoding).kind in ['S', 'O']:
+            self.inner_encoding = inner_encoding
+        else:
+            self.inner_encoding = verify_encoding(inner_encoding)
 
         self._gen_template_attrs()
